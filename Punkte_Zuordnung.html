@@ -145,6 +145,8 @@
       <div class="einstellungen">
         <label class="feld versteckt" id="feld-blatt-pkt"><span>Tabellenblatt</span><select id="blatt-pkt"></select></label>
         <label class="feld"><span>Kopfzeile in Excel-Zeile</span><input type="number" id="kopf-pkt" min="0" step="1"><small class="hinweis" style="margin:0">0 = keine Kopfzeile</small></label>
+        <label class="feld"><span>Erste Punktezeile</span><input type="number" id="start-pkt" min="1" step="1"><small class="hinweis" style="margin:0">Excel-Zeile von Nr. 1</small></label>
+        <label class="feld"><span>Letzte Punktezeile</span><input type="number" id="ende-pkt" min="1" step="1"><small class="hinweis" style="margin:0">Excel-Zeile</small></label>
         <label class="feld"><span>Nummer der Punktezeile ergibt sich aus …</span>
           <select id="modus-pkt"></select>
         </label>
@@ -411,6 +413,52 @@ function spaltenNamen(zeilen, kopf, n) {
 }
 const datenZeilen = (zeilen, kopf) => zeilen.filter(z => z.r > kopf);
 
+// Punkte-Datei: Zeile mit überwiegend Zahlen (Aufgabenpunkte)
+function zahlZeile(z) {
+  const belegt = z.v.filter(w => !leer(w));
+  const zahlen = belegt.filter(istZahlArtig).length;
+  return zahlen >= 1 && zahlen >= belegt.length / 2;
+}
+// Punktebereich = längster zusammenhängender Block von Zahlenzeilen
+// (blendet z. B. „Max. BE“-Zeilen oben und den Notenschlüssel unten aus)
+function punktebereichErkennen(zeilen) {
+  // Blöcke direkt aufeinanderfolgender Zahlenzeilen; null = Textzeile dazwischen
+  const bloecke = [];
+  let cur = null;
+  for (const z of zeilen) {
+    if (zahlZeile(z)) {
+      if (cur && z.r === cur.ende + 1) { cur.ende = z.r; cur.z.push(z); }
+      else { cur = { start: z.r, ende: z.r, z: [z] }; bloecke.push(cur); }
+    } else { cur = null; bloecke.push(null); }
+  }
+  let idx = -1;
+  bloecke.forEach((b, i) => { if (b && (idx < 0 || b.z.length > bloecke[idx].z.length)) idx = i; });
+  if (idx < 0) return { start: zeilen[0] ? zeilen[0].r : 1, ende: zeilen.length ? zeilen[zeilen.length - 1].r : 1 };
+  const haupt = bloecke[idx];
+  const spalten = new Set();
+  haupt.z.forEach(z => z.v.forEach((w, i) => { if (!leer(w)) spalten.add(i); }));
+  // Über bis zu 3 Leerzeilen hinweg erweitern (z. B. leere Zeile für ein fehlendes Kind),
+  // aber nur, wenn der Nachbarblock keine Spalten nutzt, die im Hauptblock leer sind (z. B. „Max. BE“-Beschriftung).
+  const passt = b => b.z.every(z => z.v.every((w, i) => leer(w) || spalten.has(i)));
+  for (let j = idx - 1; j >= 0 && bloecke[j] && haupt.start - bloecke[j].ende - 1 <= 3 && passt(bloecke[j]); j--) haupt.start = bloecke[j].start;
+  for (let j = idx + 1; j < bloecke.length && bloecke[j] && bloecke[j].start - haupt.ende - 1 <= 3 && passt(bloecke[j]); j++) haupt.ende = bloecke[j].ende;
+  return { start: haupt.start, ende: haupt.ende };
+}
+// Kopfzeile = nächste Textzeile oberhalb der Punkte, die die meisten Punktespalten beschriftet
+function punktekopfErkennen(zeilen, bereich) {
+  const spalten = new Set();
+  zeilen.filter(z => z.r >= bereich.start && z.r <= bereich.ende)
+    .forEach(z => z.v.forEach((w, i) => { if (!leer(w)) spalten.add(i); }));
+  const oben = zeilen.filter(z => z.r < bereich.start).reverse();
+  for (const z of oben) {
+    if (zahlZeile(z)) continue;
+    const abdeckung = [...spalten].filter(i => !leer(z.v[i])).length;
+    if (abdeckung >= Math.max(1, spalten.size / 2)) return z.r;
+  }
+  return 0;
+}
+const imBereich = (t, z) => z.r >= t.start && z.r <= t.ende && z.r !== t.kopf;
+
 // ---------- Zustand ----------
 const Z = {
   pkt: null, // { dateiname, blaetter, blatt, kopf, modus ('pos' | Spaltenindex), spalten:Set }
@@ -422,14 +470,18 @@ function zeilenVon(t) { return t.blaetter[t.blatt].zeilen; }
 
 function pktAutomatik() {
   const t = Z.pkt, z = zeilenVon(t);
-  t.kopf = kopfzeileErkennen(z);
+  const bereich = punktebereichErkennen(z);
+  t.start = bereich.start; t.ende = bereich.ende;
+  t.kopf = punktekopfErkennen(z, bereich);
   const n = anzahlSpalten(z), namen = spaltenNamen(z, t.kopf, n);
   t.modus = "pos";
   if (t.kopf) {
     const i = namen.findIndex(h => nrMuster.test(h));
-    if (i >= 0 && datenZeilen(z, t.kopf).every(r => leer(r.v[i]) || alsGanzzahl(r.v[i]) !== null)) t.modus = i;
+    if (i >= 0 && z.filter(r => imBereich(t, r)).every(r => leer(r.v[i]) || alsGanzzahl(r.v[i]) !== null)) t.modus = i;
   }
-  t.spalten = new Set([...Array(n).keys()].filter(i => i !== t.modus));
+  // nur Spalten übernehmen, die im Punktebereich etwas enthalten
+  const belegt = i => z.some(r => imBereich(t, r) && !leer(r.v[i]));
+  t.spalten = new Set([...Array(n).keys()].filter(i => i !== t.modus && belegt(i)));
 }
 
 function klAutomatik() {
@@ -507,6 +559,8 @@ function pktZeigen() {
   const t = Z.pkt; if (!t) return;
   const z = zeilenVon(t), n = anzahlSpalten(z), namen = spaltenNamen(z, t.kopf, n);
   $("kopf-pkt").value = t.kopf;
+  $("start-pkt").value = t.start;
+  $("ende-pkt").value = t.ende;
   const sel = $("modus-pkt"); sel.innerHTML = "";
   sel.add(new Option("Position der Zeile (1. Punktezeile = Nr. 1)", "pos"));
   namen.forEach((h, i) => sel.add(new Option(`Nummernspalte: ${h}`, i)));
@@ -530,7 +584,9 @@ function klZeigen() {
 $("blatt-pkt").addEventListener("change", e => { Z.pkt.blatt = +e.target.value; pktAutomatik(); allesNeu(); });
 $("blatt-kl").addEventListener("change", e => { Z.kl.blatt = +e.target.value; klAutomatik(); allesNeu(); });
 $("kopf-pkt").addEventListener("change", e => { Z.pkt.kopf = Math.max(0, parseInt(e.target.value, 10) || 0); allesNeu(); });
-$("kopf-kl").addEventListener("change", e => { Z.kl.kopf = Math.max(0, parseInt(e.target.value, 10) || 0); allesNeu(); });
+$("start-pkt").addEventListener("change", e => { const t = Z.pkt; t.start = Math.max(1, parseInt(e.target.value, 10) || 1); if (t.ende < t.start) t.ende = t.start; allesNeu(); });
+$("ende-pkt").addEventListener("change", e => { const t = Z.pkt; t.ende = Math.max(t.start, parseInt(e.target.value, 10) || t.start); allesNeu(); });
+$("kopf-kl").addEventListener("change",e => { Z.kl.kopf = Math.max(0, parseInt(e.target.value, 10) || 0); allesNeu(); });
 $("modus-pkt").addEventListener("change", e => {
   const t = Z.pkt, alt = t.modus;
   t.modus = e.target.value === "pos" ? "pos" : +e.target.value;
@@ -544,12 +600,13 @@ $("mit-nr").addEventListener("change", ergebnisNeu);
 
 // ---------- Zuordnung der Punktezeilen zu Nummern ----------
 function punkteNachNummer() {
-  const t = Z.pkt, z = zeilenVon(t), daten = datenZeilen(z, t.kopf);
+  const t = Z.pkt, z = zeilenVon(t), daten = z.filter(r => imBereich(t, r));
   const karte = new Map(), probleme = [];
   let maxNr = 0;
   if (t.modus === "pos") {
-    const start = t.kopf > 0 ? t.kopf + 1 : (daten[0] ? daten[0].r : 1);
-    for (const r of daten) { const nr = r.r - start + 1; karte.set(nr, r); maxNr = Math.max(maxNr, nr); }
+    // leere Zeilen im Bereich zählen mit (z. B. fehlendes Kind)
+    maxNr = t.ende - t.start + 1 - (t.kopf >= t.start && t.kopf <= t.ende ? 1 : 0);
+    for (const r of daten) { const nr = r.r - t.start + 1 - (t.kopf >= t.start && t.kopf < r.r ? 1 : 0); karte.set(nr, r); }
   } else {
     for (const r of daten) {
       const nr = alsGanzzahl(r.v[t.modus]);
@@ -579,10 +636,10 @@ function pktVorschau() {
   const nrVonZeile = new Map([...karte].map(([nr, r]) => [r.r, nr]));
   const kopf = [{ text: "Excel-Zeile" }, { text: "→ Nr.", klasse: "nr" }, ...namen.map(h => ({ text: h }))];
   const zeilen = z.map(r => {
-    const istKopf = r.r === t.kopf, davor = r.r < t.kopf;
+    const istKopf = r.r === t.kopf, aussen = !istKopf && !imBereich(t, r);
     const nr = nrVonZeile.get(r.r);
     return {
-      klasse: istKopf ? "kopf" : (davor ? "ignoriert" : ""),
+      klasse: istKopf ? "kopf" : (aussen ? "ignoriert" : ""),
       zellen: [{ text: r.r }, { text: istKopf ? "Kopf" : (nr ?? "–"), klasse: "nr" },
         ...Array.from({ length: n }, (_, i) => ({ text: anzeige(r.v[i]), klasse: typeof r.v[i] === "number" ? "zahl" : "" }))]
     };
