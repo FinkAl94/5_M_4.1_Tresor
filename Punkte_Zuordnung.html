@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Datenschutz: Diese Seite darf keinerlei Netzwerkverbindungen aufbauen.
+     Die Content-Security-Policy sperrt alle externen Quellen und Verbindungen (connect-src 'none'). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Punkte-Zuordnung</title>
+<style>
+  :root {
+    --blau-dunkel: #1f3a5f;
+    --blau: #2e6da4;
+    --blau-hell: #dce6f2;
+    --blau-sehrhell: #f2f6fb;
+    --text: #1d2733;
+    --grau: #5b6775;
+    --rand: #c9d5e3;
+    --ok: #2e7d32;
+    --ok-hell: #e6f4e7;
+    --warn: #a15c00;
+    --warn-hell: #fff3e0;
+    --fehler: #b3261e;
+    --fehler-hell: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--blau-sehrhell); color: var(--text);
+    font: 15px/1.45 "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+  }
+  header { background: var(--blau-dunkel); color: #fff; padding: 18px 24px; }
+  header h1 { margin: 0; font-size: 22px; font-weight: 600; }
+  header p { margin: 4px 0 0; opacity: .85; font-size: 14px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  .schutz {
+    background: var(--ok-hell); border: 1px solid #b7dcb9; border-left: 5px solid var(--ok);
+    border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px;
+  }
+  .karte {
+    background: #fff; border: 1px solid var(--rand); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 16px;
+  }
+  .karte h2 { margin: 0 0 4px; font-size: 18px; color: var(--blau-dunkel); display: flex; align-items: center; gap: 10px; }
+  .schritt {
+    display: inline-flex; width: 28px; height: 28px; border-radius: 50%; background: var(--blau);
+    color: #fff; align-items: center; justify-content: center; font-size: 15px; flex: none;
+  }
+  .hinweis { color: var(--grau); font-size: 13.5px; margin: 0 0 12px; }
+  .drop {
+    display: block; border: 2px dashed var(--rand); border-radius: 10px; padding: 18px; text-align: center;
+    background: var(--blau-sehrhell); cursor: pointer; transition: background .15s, border-color .15s;
+  }
+  .drop:hover, .drop.aktiv { border-color: var(--blau); background: var(--blau-hell); }
+  .drop strong { color: var(--blau); }
+  .drop input { display: none; }
+  .dateiname { margin-top: 8px; font-weight: 600; color: var(--blau-dunkel); }
+  .einstellungen { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 14px 0 10px; align-items: flex-start; }
+  .feld { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+  .feld > span { font-weight: 600; color: var(--blau-dunkel); }
+  select, input[type=number], input[type=text] {
+    font: inherit; padding: 6px 8px; border: 1px solid var(--rand); border-radius: 6px; background: #fff; min-height: 36px;
+  }
+  input[type=number] { width: 90px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; max-width: 100%; }
+  .chips label {
+    border: 1px solid var(--rand); border-radius: 16px; padding: 4px 10px; font-size: 13.5px;
+    cursor: pointer; background: #fff; user-select: none; display: inline-flex; gap: 6px; align-items: center;
+  }
+  .chips label:has(input:checked) { background: var(--blau-hell); border-color: var(--blau); }
+  .tabelle-box { overflow: auto; max-height: 360px; border: 1px solid var(--rand); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { padding: 5px 9px; border-bottom: 1px solid #e3eaf2; text-align: left; white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--blau-hell); color: var(--blau-dunkel); z-index: 1; }
+  td.zahl { text-align: right; font-variant-numeric: tabular-nums; }
+  td.nr, th.nr { background: #eef3fa; font-weight: 600; text-align: center; }
+  tr.kopf td { background: #f1f1f1; color: var(--grau); font-style: italic; }
+  tr.ignoriert td { color: #9aa4af; }
+  td.status-ok { color: var(--ok); }
+  td.status-warn { color: var(--warn); background: var(--warn-hell); }
+  td.status-fehler { color: var(--fehler); background: var(--fehler-hell); }
+  .meldungen { margin: 12px 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+  .meldungen li { padding: 7px 12px; border-radius: 6px; font-size: 14px; }
+  .meldungen .ok { background: var(--ok-hell); color: var(--ok); }
+  .meldungen .warn { background: var(--warn-hell); color: var(--warn); }
+  .meldungen .fehler { background: var(--fehler-hell); color: var(--fehler); }
+  .knopfleiste { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 14px; }
+  button {
+    font: inherit; font-weight: 600; border: none; border-radius: 8px; padding: 10px 18px; cursor: pointer; min-height: 42px;
+  }
+  .primaer { background: var(--blau); color: #fff; }
+  .primaer:hover { background: var(--blau-dunkel); }
+  .primaer:disabled { background: #9fb3c8; cursor: not-allowed; }
+  .sekundaer { background: #fff; color: var(--fehler); border: 1px solid var(--fehler); }
+  .sekundaer:hover { background: var(--fehler-hell); }
+  .versteckt { display: none !important; }
+  details { margin-top: 8px; font-size: 14px; }
+  summary { cursor: pointer; color: var(--blau); font-weight: 600; }
+  .anleitung ol { margin: 8px 0 0; padding-left: 20px; }
+  .anleitung li { margin-bottom: 4px; }
+  footer { text-align: center; color: var(--grau); font-size: 12.5px; padding: 8px 16px 24px; }
+  @media (max-width: 600px) {
+    header { padding: 14px 16px; }
+    main { padding: 12px; }
+    .karte { padding: 14px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Punkte-Zuordnung</h1>
+  <p>Vertauschte Punktezeilen über die Nummern der Klassenliste den richtigen Namen zuordnen – vollständig offline.</p>
+</header>
+
+<main>
+  <div class="schutz">
+    <strong>Datenschutz:</strong> Alle Daten bleiben in diesem Browserfenster. Es gibt keinen Upload, keine Speicherung
+    und keine Verbindung ins Internet – Netzwerkzugriffe sind in dieser Datei technisch gesperrt.
+    Beim Schließen des Fensters oder mit „Alles zurücksetzen“ sind die Daten weg.
+  </div>
+
+  <section class="karte anleitung">
+    <details>
+      <summary>So funktioniert es</summary>
+      <ol>
+        <li><strong>Punkte-Datei</strong> laden (Excel .xlsx oder .csv): jede Zeile enthält die Punkte eines Kindes in vertauschter Reihenfolge.</li>
+        <li><strong>Klassenliste</strong> laden: jedes Kind hat eine Nummer. Die Nummer gibt an, in welcher Zeile der Punkte-Datei seine Punkte stehen.</li>
+        <li>Vorschau prüfen: In der Spalte <em>→ Nr.</em> siehst du, welche Nummer jede Punktezeile bekommt. Kopfzeile und Spalten bei Bedarf anpassen.</li>
+        <li>Ergebnis prüfen und als Excel-Datei speichern.</li>
+      </ol>
+      <p class="hinweis" style="margin-top:8px">Alte .xls-Dateien bitte in Excel als .xlsx speichern („Speichern unter“ → „Excel-Arbeitsmappe“).</p>
+    </details>
+  </section>
+
+  <!-- Schritt 1 -->
+  <section class="karte" id="karte-pkt">
+    <h2><span class="schritt">1</span> Punkte-Datei (vertauschte Reihenfolge)</h2>
+    <p class="hinweis">Eine Zeile pro Kind, Spalten = Aufgaben bzw. Punkte.</p>
+    <label class="drop" id="drop-pkt">
+      <input type="file" id="datei-pkt" accept=".xlsx,.xlsm,.csv,.txt">
+      <div><strong>Datei auswählen</strong> oder hierher ziehen (.xlsx / .csv)</div>
+      <div class="dateiname" id="name-pkt"></div>
+    </label>
+    <div id="cfg-pkt" class="versteckt">
+      <div class="einstellungen">
+        <label class="feld versteckt" id="feld-blatt-pkt"><span>Tabellenblatt</span><select id="blatt-pkt"></select></label>
+        <label class="feld"><span>Kopfzeile in Excel-Zeile</span><input type="number" id="kopf-pkt" min="0" step="1"><small class="hinweis" style="margin:0">0 = keine Kopfzeile</small></label>
+        <label class="feld"><span>Nummer der Punktezeile ergibt sich aus …</span>
+          <select id="modus-pkt"></select>
+        </label>
+      </div>
+      <div class="feld" style="margin-bottom:10px"><span>Diese Spalten übernehmen</span><div class="chips" id="spalten-pkt"></div></div>
+      <div class="tabelle-box"><table id="vorschau-pkt"></table></div>
+    </div>
+  </section>
+
+  <!-- Schritt 2 -->
+  <section class="karte" id="karte-kl">
+    <h2><span class="schritt">2</span> Klassenliste mit Nummern</h2>
+    <p class="hinweis">Eine Zeile pro Kind: Name(n) und die Nummer der zugehörigen Punktezeile.</p>
+    <label class="drop" id="drop-kl">
+      <input type="file" id="datei-kl" accept=".xlsx,.xlsm,.csv,.txt">
+      <div><strong>Datei auswählen</strong> oder hierher ziehen (.xlsx / .csv)</div>
+      <div class="dateiname" id="name-kl"></div>
+    </label>
+    <div id="cfg-kl" class="versteckt">
+      <div class="einstellungen">
+        <label class="feld versteckt" id="feld-blatt-kl"><span>Tabellenblatt</span><select id="blatt-kl"></select></label>
+        <label class="feld"><span>Kopfzeile in Excel-Zeile</span><input type="number" id="kopf-kl" min="0" step="1"><small class="hinweis" style="margin:0">0 = keine Kopfzeile</small></label>
+        <label class="feld"><span>Spalte mit der Nummer</span><select id="nr-kl"></select></label>
+      </div>
+      <div class="feld" style="margin-bottom:10px"><span>Namensspalten</span><div class="chips" id="namen-kl"></div></div>
+      <div class="tabelle-box"><table id="vorschau-kl"></table></div>
+    </div>
+  </section>
+
+  <!-- Schritt 3 -->
+  <section class="karte" id="karte-erg">
+    <h2><span class="schritt">3</span> Ergebnis prüfen und speichern</h2>
+    <p class="hinweis" id="erg-leer">Sobald beide Dateien geladen sind, erscheint hier die Zuordnung.</p>
+    <div id="erg-inhalt" class="versteckt">
+      <div class="einstellungen">
+        <label class="feld"><span>Reihenfolge</span>
+          <select id="sortierung">
+            <option value="alpha">alphabetisch nach Namen</option>
+            <option value="liste">wie in der Klassenliste</option>
+          </select>
+        </label>
+        <label class="feld"><span>Zuordnungsnummer</span>
+          <select id="mit-nr">
+            <option value="nein">nicht ausgeben</option>
+            <option value="ja">als Spalte mit ausgeben</option>
+          </select>
+        </label>
+      </div>
+      <ul class="meldungen" id="meldungen"></ul>
+      <div class="tabelle-box" style="max-height:480px"><table id="ergebnis"></table></div>
+      <div class="knopfleiste">
+        <label class="feld"><span>Dateiname</span><input type="text" id="dateiname-aus" size="34"></label>
+        <button class="primaer" id="btn-export" disabled>Excel-Datei speichern</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="knopfleiste" style="justify-content:flex-end">
+    <button class="sekundaer" id="btn-reset">Alles zurücksetzen</button>
+  </div>
+</main>
+<footer>Offline-Werkzeug · keine externen Bibliotheken · keine Datenübertragung</footer>
+
+<script>
+"use strict";
+/* =====================================================================
+   Punkte-Zuordnung – läuft komplett lokal im Browser.
+   Kein fetch, kein XMLHttpRequest, keine externen Skripte, kein Speicher.
+   ===================================================================== */
+
+// ---------- Hilfsfunktionen ----------
+const $ = id => document.getElementById(id);
+const leer = v => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
+const spaltenBuchstabe = i => { let s = ""; i++; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
+const spaltenIndex = ref => { const m = /^([A-Z]+)/.exec(ref); if (!m) return -1; let n = 0; for (const ch of m[1]) n = n * 26 + (ch.charCodeAt(0) - 64); return n - 1; };
+const istZahlArtig = v => typeof v === "number" || (typeof v === "string" && /^\s*-?\d+([.,]\d+)?\s*$/.test(v));
+function alsGanzzahl(v) {
+  if (typeof v === "number") return Number.isInteger(v) ? v : (Math.abs(v - Math.round(v)) < 1e-9 ? Math.round(v) : null);
+  if (typeof v === "string" && /^\s*\d+([.,]0+)?\s*$/.test(v)) return parseInt(v, 10);
+  return null;
+}
+const anzeige = v => leer(v) ? "" : (typeof v === "number" ? v.toLocaleString("de-DE", { maximumFractionDigits: 10 }) : String(v));
+
+// ---------- ZIP lesen (xlsx ist ein ZIP-Archiv) ----------
+async function zipOeffnen(buf) {
+  const u8 = new Uint8Array(buf), dv = new DataView(buf);
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= Math.max(0, u8.length - 22 - 65535); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error("Die Datei ist keine gültige .xlsx-Datei.");
+  const anzahl = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+  const dateien = new Map();
+  const dec = new TextDecoder("utf-8");
+  for (let k = 0; k < anzahl; k++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) throw new Error("Beschädigtes ZIP-Verzeichnis.");
+    const methode = dv.getUint16(p + 10, true), groesse = dv.getUint32(p + 20, true);
+    const nl = dv.getUint16(p + 28, true), el = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true);
+    const off = dv.getUint32(p + 42, true);
+    const name = dec.decode(u8.subarray(p + 46, p + 46 + nl));
+    dateien.set(name.replace(/^\/+/, "").toLowerCase(), { methode, groesse, off });
+    p += 46 + nl + el + cl;
+  }
+  return {
+    hat: n => dateien.has(n.toLowerCase()),
+    async text(n) {
+      const e = dateien.get(n.replace(/^\/+/, "").toLowerCase());
+      if (!e) return null;
+      const lnl = dv.getUint16(e.off + 26, true), lel = dv.getUint16(e.off + 28, true);
+      const start = e.off + 30 + lnl + lel;
+      const daten = u8.slice(start, start + e.groesse);
+      if (e.methode === 0) return dec.decode(daten);
+      if (e.methode !== 8) throw new Error("Nicht unterstützte Komprimierung in der xlsx-Datei.");
+      if (typeof DecompressionStream === "undefined") throw new Error("Dieser Browser kann .xlsx nicht entpacken. Bitte aktuellen Edge/Chrome/Firefox/Safari nutzen oder die Datei als .csv speichern.");
+      const strom = new Blob([daten]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+      return await new Response(strom).text();
+    }
+  };
+}
+
+// ---------- XML-Hilfen ----------
+const xmlParsen = t => {
+  const d = new DOMParser().parseFromString(t, "application/xml");
+  if (d.getElementsByTagName("parsererror").length) throw new Error("XML in der xlsx-Datei ist fehlerhaft.");
+  return d;
+};
+const alle = (knoten, name) => Array.from(knoten.getElementsByTagNameNS("*", name));
+const kinder = (knoten, name) => Array.from(knoten.children).filter(c => c.localName === name);
+function textVon(knoten) { // <is>/<si>: direkte <t> oder Rich-Text <r><t>, ohne Lautschrift <rPh>
+  let s = "";
+  for (const c of knoten.children) {
+    if (c.localName === "t") s += c.textContent;
+    else if (c.localName === "r") for (const t of kinder(c, "t")) s += t.textContent;
+  }
+  return s;
+}
+
+// ---------- xlsx lesen ----------
+async function xlsxLesen(buf) {
+  const zip = await zipOeffnen(buf);
+  const wbText = await zip.text("xl/workbook.xml");
+  if (!wbText) throw new Error("Die Datei enthält keine Excel-Arbeitsmappe.");
+  const wb = xmlParsen(wbText);
+  const relsText = await zip.text("xl/_rels/workbook.xml.rels");
+  const rels = new Map();
+  let sstPfad = "xl/sharedStrings.xml";
+  if (relsText) {
+    for (const r of alle(xmlParsen(relsText), "Relationship")) {
+      let ziel = r.getAttribute("Target") || "";
+      ziel = ziel.startsWith("/") ? ziel.slice(1) : "xl/" + ziel.replace(/^\.\//, "");
+      rels.set(r.getAttribute("Id"), ziel);
+      if ((r.getAttribute("Type") || "").endsWith("/sharedStrings")) sstPfad = ziel;
+    }
+  }
+  const sst = [];
+  const sstText = await zip.text(sstPfad);
+  if (sstText) for (const si of alle(xmlParsen(sstText), "si")) sst.push(textVon(si));
+
+  const blaetter = [];
+  let nr = 0;
+  for (const s of alle(wb, "sheet")) {
+    nr++;
+    const rid = s.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id") || s.getAttribute("r:id");
+    const pfad = rels.get(rid) || `xl/worksheets/sheet${nr}.xml`;
+    const t = await zip.text(pfad);
+    if (!t) continue;
+    blaetter.push({ name: s.getAttribute("name") || `Blatt ${nr}`, zeilen: blattLesen(xmlParsen(t), sst) });
+  }
+  if (!blaetter.length) throw new Error("Kein Tabellenblatt gefunden.");
+  return blaetter;
+}
+
+function blattLesen(doc, sst) {
+  const zeilen = [];
+  let zaehler = 0;
+  for (const row of alle(doc, "row")) {
+    const rAttr = parseInt(row.getAttribute("r"), 10);
+    zaehler = Number.isFinite(rAttr) ? rAttr : zaehler + 1;
+    const werte = [];
+    let spalte = -1;
+    for (const c of kinder(row, "c")) {
+      const ref = c.getAttribute("r");
+      spalte = ref ? spaltenIndex(ref) : spalte + 1;
+      const typ = c.getAttribute("t") || "n";
+      const vEl = kinder(c, "v")[0];
+      const v = vEl ? vEl.textContent : null;
+      let wert = null;
+      if (typ === "s") wert = v !== null ? (sst[parseInt(v, 10)] ?? "") : null;
+      else if (typ === "inlineStr") { const is = kinder(c, "is")[0]; wert = is ? textVon(is) : null; }
+      else if (typ === "b") wert = v === null ? null : (v === "1" ? "WAHR" : "FALSCH");
+      else if (typ === "str" || typ === "e") wert = v;
+      else if (v !== null && v !== "") { const z = Number(v); wert = Number.isFinite(z) ? z : v; }
+      werte[spalte] = wert;
+    }
+    for (let i = 0; i < werte.length; i++) if (werte[i] === undefined) werte[i] = null;
+    if (werte.some(w => !leer(w))) zeilen.push({ r: zaehler, v: werte });
+  }
+  return zeilen;
+}
+
+// ---------- CSV lesen ----------
+function csvLesen(buf) {
+  let text = new TextDecoder("utf-8").decode(buf);
+  if (text.includes("�")) text = new TextDecoder("windows-1252").decode(buf); // Excel-CSV (ANSI)
+  text = text.replace(/^﻿/, "");
+  const ersteZeile = text.split(/\r?\n/)[0] || "";
+  const zaehle = z => (ersteZeile.match(new RegExp(z === "\t" ? "\\t" : "\\" + z, "g")) || []).length;
+  const trenner = [";", "\t", ","].sort((a, b) => zaehle(b) - zaehle(a))[0];
+  const zeilen = [];
+  let feld = "", zeile = [], inQ = false, nr = 1;
+  const feldEnde = () => { zeile.push(feld); feld = ""; };
+  const zeileEnde = () => {
+    feldEnde();
+    const werte = zeile.map(f => {
+      const t = f.trim();
+      if (t === "") return null;
+      if (/^-?\d+([.,]\d+)?$/.test(t)) return Number(t.replace(",", "."));
+      return t;
+    });
+    if (werte.some(w => !leer(w))) zeilen.push({ r: nr, v: werte });
+    zeile = []; nr++;
+  };
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQ) {
+      if (ch === '"') { if (text[i + 1] === '"') { feld += '"'; i++; } else inQ = false; }
+      else feld += ch;
+    } else if (ch === '"') inQ = true;
+    else if (ch === trenner) feldEnde();
+    else if (ch === "\n") zeileEnde();
+    else if (ch === "\r") { /* ignorieren */ }
+    else feld += ch;
+  }
+  if (feld !== "" || zeile.length) zeileEnde();
+  return [{ name: "CSV", zeilen }];
+}
+
+async function dateiLesen(datei) {
+  const buf = await datei.arrayBuffer();
+  const name = datei.name.toLowerCase();
+  if (name.endsWith(".xls")) throw new Error("Alte .xls-Dateien werden nicht unterstützt. Bitte in Excel als .xlsx speichern.");
+  if (name.endsWith(".csv") || name.endsWith(".txt")) return csvLesen(buf);
+  return xlsxLesen(buf);
+}
+
+// ---------- Erkennung ----------
+function kopfzeileErkennen(zeilen) {
+  // Kopfzeile = letzte Zeile ohne Zahlen direkt vor der ersten Zeile mit Zahlen
+  const ersteZahlZeile = zeilen.findIndex(z => z.v.some(istZahlArtig));
+  if (ersteZahlZeile <= 0) return 0;
+  const kandidat = zeilen[ersteZahlZeile - 1];
+  return kandidat.v.some(w => !leer(w)) ? kandidat.r : 0;
+}
+const anzahlSpalten = zeilen => zeilen.reduce((m, z) => Math.max(m, z.v.length), 0);
+const nrMuster = /^\s*(nr\b|nr\.|nummer|no\.?\b|code|id\b|kennung|zeile|lfd)/i;
+
+function spaltenNamen(zeilen, kopf, n) {
+  const kz = zeilen.find(z => z.r === kopf);
+  return Array.from({ length: n }, (_, i) => {
+    const t = kz && !leer(kz.v[i]) ? String(kz.v[i]).trim() : "";
+    return t || `Spalte ${spaltenBuchstabe(i)}`;
+  });
+}
+const datenZeilen = (zeilen, kopf) => zeilen.filter(z => z.r > kopf);
+
+// ---------- Zustand ----------
+const Z = {
+  pkt: null, // { dateiname, blaetter, blatt, kopf, modus ('pos' | Spaltenindex), spalten:Set }
+  kl: null   // { dateiname, blaetter, blatt, kopf, nrSpalte, namen:Set }
+};
+let ergebnisCache = null;
+
+function zeilenVon(t) { return t.blaetter[t.blatt].zeilen; }
+
+function pktAutomatik() {
+  const t = Z.pkt, z = zeilenVon(t);
+  t.kopf = kopfzeileErkennen(z);
+  const n = anzahlSpalten(z), namen = spaltenNamen(z, t.kopf, n);
+  t.modus = "pos";
+  if (t.kopf) {
+    const i = namen.findIndex(h => nrMuster.test(h));
+    if (i >= 0 && datenZeilen(z, t.kopf).every(r => leer(r.v[i]) || alsGanzzahl(r.v[i]) !== null)) t.modus = i;
+  }
+  t.spalten = new Set([...Array(n).keys()].filter(i => i !== t.modus));
+}
+
+function klAutomatik() {
+  const t = Z.kl, z = zeilenVon(t);
+  t.kopf = kopfzeileErkennen(z);
+  const n = anzahlSpalten(z), namen = spaltenNamen(z, t.kopf, n), daten = datenZeilen(z, t.kopf);
+  const ganzzahlig = i => { const w = daten.map(r => r.v[i]).filter(v => !leer(v)); return w.length > 0 && w.every(v => alsGanzzahl(v) !== null); };
+  let nr = namen.findIndex((h, i) => t.kopf && nrMuster.test(h) && ganzzahlig(i));
+  if (nr < 0) nr = [...Array(n).keys()].reverse().find(ganzzahlig) ?? -1; // ganz rechts zuerst (oft „lfd. Nr.“ links)
+  t.nrSpalte = nr;
+  t.namen = new Set([...Array(n).keys()].filter(i => {
+    if (i === nr) return false;
+    const w = daten.map(r => r.v[i]).filter(v => !leer(v));
+    return w.length > 0 && w.filter(v => !istZahlArtig(v)).length >= w.length / 2;
+  }));
+}
+
+// ---------- Oberfläche: Dateien laden ----------
+function dateiFeld(art) {
+  const drop = $("drop-" + art), input = $("datei-" + art);
+  input.addEventListener("change", () => { if (input.files[0]) laden(art, input.files[0]); });
+  ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("aktiv"); }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("aktiv"); }));
+  drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) laden(art, f); });
+}
+// Dateien, die neben das Feld fallen, sollen den Browser nicht wegnavigieren
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => e.preventDefault());
+
+async function laden(art, datei) {
+  $("name-" + art).textContent = "Lese " + datei.name + " …";
+  try {
+    const blaetter = await dateiLesen(datei);
+    Z[art] = { dateiname: datei.name, blaetter, blatt: 0 };
+    // erstes Blatt mit Inhalt wählen
+    const idx = blaetter.findIndex(b => b.zeilen.length > 0);
+    Z[art].blatt = idx >= 0 ? idx : 0;
+    $("name-" + art).textContent = "✓ " + datei.name;
+    blattAuswahl(art);
+    art === "pkt" ? pktAutomatik() : klAutomatik();
+    if (art === "pkt") $("dateiname-aus").value = datei.name.replace(/\.[^.]+$/, "") + "_zugeordnet.xlsx";
+    $("cfg-" + art).classList.remove("versteckt");
+    allesNeu();
+  } catch (err) {
+    Z[art] = null;
+    $("cfg-" + art).classList.add("versteckt");
+    $("name-" + art).textContent = "⚠ " + (err && err.message ? err.message : "Datei konnte nicht gelesen werden.");
+    allesNeu();
+  }
+}
+
+function blattAuswahl(art) {
+  const t = Z[art], sel = $("blatt-" + art);
+  sel.innerHTML = "";
+  t.blaetter.forEach((b, i) => sel.add(new Option(`${b.name} (${b.zeilen.length} Zeilen)`, i)));
+  sel.value = t.blatt;
+  $("feld-blatt-" + art).classList.toggle("versteckt", t.blaetter.length < 2);
+}
+
+// ---------- Oberfläche: Einstellungen ----------
+function chips(container, namen, auswahl, ausschluss, beiAenderung) {
+  container.innerHTML = "";
+  namen.forEach((n, i) => {
+    if (i === ausschluss) return;
+    const l = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = auswahl.has(i);
+    cb.addEventListener("change", () => { cb.checked ? auswahl.add(i) : auswahl.delete(i); beiAenderung(); });
+    l.append(cb, document.createTextNode(n));
+    container.append(l);
+  });
+}
+
+function pktZeigen() {
+  const t = Z.pkt; if (!t) return;
+  const z = zeilenVon(t), n = anzahlSpalten(z), namen = spaltenNamen(z, t.kopf, n);
+  $("kopf-pkt").value = t.kopf;
+  const sel = $("modus-pkt"); sel.innerHTML = "";
+  sel.add(new Option("Position der Zeile (1. Punktezeile = Nr. 1)", "pos"));
+  namen.forEach((h, i) => sel.add(new Option(`Nummernspalte: ${h}`, i)));
+  sel.value = t.modus;
+  chips($("spalten-pkt"), namen, t.spalten, t.modus === "pos" ? -1 : t.modus, () => { pktVorschau(); ergebnisNeu(); });
+  pktVorschau();
+}
+
+function klZeigen() {
+  const t = Z.kl; if (!t) return;
+  const z = zeilenVon(t), n = anzahlSpalten(z), namen = spaltenNamen(z, t.kopf, n);
+  $("kopf-kl").value = t.kopf;
+  const sel = $("nr-kl"); sel.innerHTML = "";
+  sel.add(new Option("– bitte wählen –", -1));
+  namen.forEach((h, i) => sel.add(new Option(h, i)));
+  sel.value = t.nrSpalte;
+  chips($("namen-kl"), namen, t.namen, t.nrSpalte, () => { klVorschau(); ergebnisNeu(); });
+  klVorschau();
+}
+
+$("blatt-pkt").addEventListener("change", e => { Z.pkt.blatt = +e.target.value; pktAutomatik(); allesNeu(); });
+$("blatt-kl").addEventListener("change", e => { Z.kl.blatt = +e.target.value; klAutomatik(); allesNeu(); });
+$("kopf-pkt").addEventListener("change", e => { Z.pkt.kopf = Math.max(0, parseInt(e.target.value, 10) || 0); allesNeu(); });
+$("kopf-kl").addEventListener("change", e => { Z.kl.kopf = Math.max(0, parseInt(e.target.value, 10) || 0); allesNeu(); });
+$("modus-pkt").addEventListener("change", e => {
+  const t = Z.pkt, alt = t.modus;
+  t.modus = e.target.value === "pos" ? "pos" : +e.target.value;
+  if (alt !== "pos") t.spalten.add(alt);
+  if (t.modus !== "pos") t.spalten.delete(t.modus);
+  allesNeu();
+});
+$("nr-kl").addEventListener("change", e => { const t = Z.kl; t.nrSpalte = +e.target.value; t.namen.delete(t.nrSpalte); allesNeu(); });
+$("sortierung").addEventListener("change", ergebnisNeu);
+$("mit-nr").addEventListener("change", ergebnisNeu);
+
+// ---------- Zuordnung der Punktezeilen zu Nummern ----------
+function punkteNachNummer() {
+  const t = Z.pkt, z = zeilenVon(t), daten = datenZeilen(z, t.kopf);
+  const karte = new Map(), probleme = [];
+  let maxNr = 0;
+  if (t.modus === "pos") {
+    const start = t.kopf > 0 ? t.kopf + 1 : (daten[0] ? daten[0].r : 1);
+    for (const r of daten) { const nr = r.r - start + 1; karte.set(nr, r); maxNr = Math.max(maxNr, nr); }
+  } else {
+    for (const r of daten) {
+      const nr = alsGanzzahl(r.v[t.modus]);
+      if (nr === null) { probleme.push(`Punktezeile in Excel-Zeile ${r.r} hat keine gültige Nummer und wird ignoriert.`); continue; }
+      if (karte.has(nr)) { probleme.push(`Nummer ${nr} kommt in der Punkte-Datei mehrfach vor (Excel-Zeilen ${karte.get(nr).r} und ${r.r}). Verwendet wird die erste.`); continue; }
+      karte.set(nr, r); maxNr = Math.max(maxNr, nr);
+    }
+  }
+  return { karte, maxNr, probleme };
+}
+
+// ---------- Vorschauen ----------
+function tabelleBauen(tab, kopfzellen, zeilen) {
+  tab.innerHTML = "";
+  const thead = tab.createTHead(), tr = thead.insertRow();
+  kopfzellen.forEach(k => { const th = document.createElement("th"); th.textContent = k.text; if (k.klasse) th.className = k.klasse; tr.append(th); });
+  const tb = tab.createTBody();
+  zeilen.forEach(z => {
+    const r = tb.insertRow(); if (z.klasse) r.className = z.klasse;
+    z.zellen.forEach(c => { const td = r.insertCell(); td.textContent = c.text; if (c.klasse) td.className = c.klasse; if (c.titel) td.title = c.titel; });
+  });
+}
+
+function pktVorschau() {
+  const t = Z.pkt, z = zeilenVon(t), n = anzahlSpalten(z), namen = spaltenNamen(z, t.kopf, n);
+  const { karte } = punkteNachNummer();
+  const nrVonZeile = new Map([...karte].map(([nr, r]) => [r.r, nr]));
+  const kopf = [{ text: "Excel-Zeile" }, { text: "→ Nr.", klasse: "nr" }, ...namen.map(h => ({ text: h }))];
+  const zeilen = z.map(r => {
+    const istKopf = r.r === t.kopf, davor = r.r < t.kopf;
+    const nr = nrVonZeile.get(r.r);
+    return {
+      klasse: istKopf ? "kopf" : (davor ? "ignoriert" : ""),
+      zellen: [{ text: r.r }, { text: istKopf ? "Kopf" : (nr ?? "–"), klasse: "nr" },
+        ...Array.from({ length: n }, (_, i) => ({ text: anzeige(r.v[i]), klasse: typeof r.v[i] === "number" ? "zahl" : "" }))]
+    };
+  });
+  tabelleBauen($("vorschau-pkt"), kopf, zeilen);
+}
+
+function klVorschau() {
+  const t = Z.kl, z = zeilenVon(t), n = anzahlSpalten(z), namen = spaltenNamen(z, t.kopf, n);
+  const kopf = [{ text: "Excel-Zeile" }, ...namen.map((h, i) => ({ text: h, klasse: i === t.nrSpalte ? "nr" : "" }))];
+  const zeilen = z.map(r => ({
+    klasse: r.r === t.kopf ? "kopf" : (r.r < t.kopf ? "ignoriert" : ""),
+    zellen: [{ text: r.r }, ...Array.from({ length: n }, (_, i) => ({ text: anzeige(r.v[i]), klasse: i === t.nrSpalte ? "nr" : (typeof r.v[i] === "number" ? "zahl" : "") }))]
+  }));
+  tabelleBauen($("vorschau-kl"), kopf, zeilen);
+}
+
+// ---------- Ergebnis ----------
+function ergebnisBerechnen() {
+  const p = Z.pkt, k = Z.kl;
+  const meldungen = [];
+  const pz = zeilenVon(p), kz = zeilenVon(k);
+  const pNamen = spaltenNamen(pz, p.kopf, anzahlSpalten(pz));
+  const kNamen = spaltenNamen(kz, k.kopf, anzahlSpalten(kz));
+  const pSpalten = [...p.spalten].filter(i => i !== p.modus).sort((a, b) => a - b);
+  const nSpalten = [...k.namen].filter(i => i !== k.nrSpalte).sort((a, b) => a - b);
+
+  if (k.nrSpalte < 0) meldungen.push({ art: "fehler", text: "Bitte in Schritt 2 die Spalte mit der Nummer auswählen." });
+  if (!nSpalten.length) meldungen.push({ art: "fehler", text: "Bitte in Schritt 2 mindestens eine Namensspalte auswählen." });
+  if (!pSpalten.length) meldungen.push({ art: "fehler", text: "Bitte in Schritt 1 mindestens eine Punktespalte auswählen." });
+  if (meldungen.length) return { meldungen, zeilen: [], kopf: [], ok: false };
+
+  const { karte, maxNr, probleme } = punkteNachNummer();
+  probleme.forEach(t => meldungen.push({ art: "warn", text: t }));
+
+  const kinderListe = [];
+  datenZeilen(kz, k.kopf).forEach((r, pos) => {
+    const namen = nSpalten.map(i => leer(r.v[i]) ? "" : String(r.v[i]).trim());
+    if (namen.every(x => x === "")) return;
+    kinderListe.push({ pos, excel: r.r, namen, nrRoh: r.v[k.nrSpalte], nr: alsGanzzahl(r.v[k.nrSpalte]) });
+  });
+
+  const nrZaehler = new Map();
+  kinderListe.forEach(c => { if (c.nr !== null) nrZaehler.set(c.nr, (nrZaehler.get(c.nr) || 0) + 1); });
+  const benutzt = new Set();
+  let okAnzahl = 0;
+  for (const c of kinderListe) {
+    const name = c.namen.filter(Boolean).join(" ");
+    if (c.nr === null) {
+      c.status = "fehler"; c.info = leer(c.nrRoh) ? "keine Nummer" : `ungültige Nummer „${c.nrRoh}“`;
+      meldungen.push({ art: "fehler", text: `${name} (Excel-Zeile ${c.excel}): ${c.info} – keine Punkte zugeordnet.` });
+      c.punkte = pSpalten.map(() => null); continue;
+    }
+    const zeile = karte.get(c.nr);
+    c.punkte = pSpalten.map(i => zeile ? (zeile.v[i] ?? null) : null);
+    if (nrZaehler.get(c.nr) > 1) {
+      c.status = "warn"; c.info = `Nr. ${c.nr} mehrfach vergeben`;
+      meldungen.push({ art: "warn", text: `${name}: Nummer ${c.nr} ist in der Klassenliste mehrfach vergeben.` });
+    } else if (!zeile && c.nr >= 1 && c.nr <= maxNr) {
+      c.status = "warn"; c.info = "Punktezeile ist leer";
+      meldungen.push({ art: "warn", text: `${name}: Die Punktezeile Nr. ${c.nr} ist leer (z. B. gefehlt?).` });
+    } else if (!zeile) {
+      c.status = "fehler"; c.info = `Nr. ${c.nr} nicht vorhanden`;
+      meldungen.push({ art: "fehler", text: `${name}: Zur Nummer ${c.nr} gibt es keine Punktezeile.` });
+    } else if (c.punkte.every(leer)) {
+      c.status = "warn"; c.info = "keine Punkte eingetragen";
+      meldungen.push({ art: "warn", text: `${name}: In Punktezeile Nr. ${c.nr} sind in den gewählten Spalten keine Punkte eingetragen.` });
+    } else { c.status = "ok"; c.info = "✓"; okAnzahl++; }
+    if (zeile) benutzt.add(c.nr);
+  }
+  const uebrig = [...karte.keys()].filter(nr => !benutzt.has(nr)).sort((a, b) => a - b);
+  if (uebrig.length) meldungen.push({ art: "warn", text: `Punktezeile(n) ohne zugeordnetes Kind: Nr. ${uebrig.join(", ")}.` });
+
+  if ($("sortierung").value === "alpha") {
+    const vgl = new Intl.Collator("de", { sensitivity: "base", numeric: true });
+    kinderListe.sort((a, b) => { for (let i = 0; i < a.namen.length; i++) { const d = vgl.compare(a.namen[i], b.namen[i]); if (d) return d; } return a.pos - b.pos; });
+  }
+
+  const mitNr = $("mit-nr").value === "ja";
+  const kopf = [...(mitNr ? ["Nr."] : []), ...nSpalten.map(i => k.kopf ? kNamen[i] : (nSpalten.length === 1 ? "Name" : kNamen[i])), ...pSpalten.map(i => pNamen[i])];
+  meldungen.unshift({ art: okAnzahl === kinderListe.length ? "ok" : "warn",
+    text: `${okAnzahl} von ${kinderListe.length} Kindern vollständig zugeordnet · ${karte.size} Punktezeilen gelesen.` });
+  return { meldungen, kopf, mitNr, zeilen: kinderListe, ok: kinderListe.length > 0 };
+}
+
+function ergebnisNeu() {
+  const fertig = Z.pkt && Z.kl;
+  $("erg-leer").classList.toggle("versteckt", !!fertig);
+  $("erg-inhalt").classList.toggle("versteckt", !fertig);
+  ergebnisCache = null;
+  if (!fertig) { $("btn-export").disabled = true; return; }
+  const e = ergebnisBerechnen();
+  ergebnisCache = e;
+  const ul = $("meldungen"); ul.innerHTML = "";
+  const max = 25;
+  e.meldungen.slice(0, max).forEach(m => { const li = document.createElement("li"); li.className = m.art; li.textContent = m.text; ul.append(li); });
+  if (e.meldungen.length > max) { const li = document.createElement("li"); li.className = "warn"; li.textContent = `… und ${e.meldungen.length - max} weitere Hinweise.`; ul.append(li); }
+  tabelleBauen($("ergebnis"),
+    [...e.kopf.map((h, i) => ({ text: h, klasse: e.mitNr && i === 0 ? "nr" : "" })), { text: "Status" }],
+    e.zeilen.map(c => ({ zellen: [
+      ...(e.mitNr ? [{ text: c.nr ?? "", klasse: "nr" }] : []),
+      ...c.namen.map(n => ({ text: n })),
+      ...c.punkte.map(v => ({ text: anzeige(v), klasse: typeof v === "number" ? "zahl" : "" })),
+      { text: c.info, klasse: "status-" + c.status }
+    ] })));
+  $("btn-export").disabled = !e.ok;
+}
+
+function allesNeu() {
+  if (Z.pkt) pktZeigen();
+  if (Z.kl) klZeigen();
+  ergebnisNeu();
+}
+
+// ---------- xlsx schreiben ----------
+const CRC_TAB = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8) { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC_TAB[(c ^ u8[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+
+function zipErstellen(dateien) { // ohne Kompression („stored“)
+  const enc = new TextEncoder(), teile = [], zentral = [];
+  const jetzt = new Date();
+  const dosZeit = (jetzt.getHours() << 11) | (jetzt.getMinutes() << 5) | (jetzt.getSeconds() >> 1);
+  const dosDatum = ((jetzt.getFullYear() - 1980) << 9) | ((jetzt.getMonth() + 1) << 5) | jetzt.getDate();
+  let offset = 0;
+  for (const d of dateien) {
+    const name = enc.encode(d.name), daten = enc.encode(d.text), crc = crc32(daten);
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true);
+    lh.setUint16(10, dosZeit, true); lh.setUint16(12, dosDatum, true); lh.setUint32(14, crc, true);
+    lh.setUint32(18, daten.length, true); lh.setUint32(22, daten.length, true); lh.setUint16(26, name.length, true); lh.setUint16(28, 0, true);
+    teile.push(new Uint8Array(lh.buffer), name, daten);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true);
+    ch.setUint16(12, dosZeit, true); ch.setUint16(14, dosDatum, true); ch.setUint32(16, crc, true);
+    ch.setUint32(20, daten.length, true); ch.setUint32(24, daten.length, true); ch.setUint16(28, name.length, true);
+    ch.setUint32(42, offset, true);
+    zentral.push(new Uint8Array(ch.buffer), name);
+    offset += 30 + name.length + daten.length;
+  }
+  const zGroesse = zentral.reduce((s, u) => s + u.length, 0);
+  const ende = new DataView(new ArrayBuffer(22));
+  ende.setUint32(0, 0x06054b50, true); ende.setUint16(8, dateien.length, true); ende.setUint16(10, dateien.length, true);
+  ende.setUint32(12, zGroesse, true); ende.setUint32(16, offset, true);
+  return new Blob([...teile, ...zentral, new Uint8Array(ende.buffer)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+
+const xmlEsc = s => String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+function xlsxErstellen(kopf, zeilen, markierung) {
+  // markierung[i] = true -> Zeile farbig hervorheben (Problem bei der Zuordnung)
+  const zelle = (ref, v, stil) => {
+    const s = stil ? ` s="${stil}"` : "";
+    if (leer(v)) return stil ? `<c r="${ref}"${s}/>` : "";
+    if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"${s}><v>${v}</v></c>`;
+    return `<c r="${ref}" t="inlineStr"${s}><is><t xml:space="preserve">${xmlEsc(v)}</t></is></c>`;
+  };
+  const breiten = kopf.map((h, i) => Math.min(45, Math.max(6, String(h).length + 2, ...zeilen.map(z => String(z[i] ?? "").length + 2))));
+  let daten = `<row r="1">${kopf.map((h, i) => zelle(spaltenBuchstabe(i) + "1", h, 1)).join("")}</row>`;
+  zeilen.forEach((z, j) => {
+    const r = j + 2, stil = markierung[j] ? 2 : 0;
+    daten += `<row r="${r}">${z.map((v, i) => zelle(spaltenBuchstabe(i) + r, v, stil)).join("")}</row>`;
+  });
+  const letzte = spaltenBuchstabe(kopf.length - 1) + (zeilen.length + 1);
+  const blatt = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<dimension ref="A1:${letzte}"/>
+<sheetViews><sheetView workbookViewId="0" tabSelected="1"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+<sheetFormatPr defaultRowHeight="15"/>
+<cols>${breiten.map((b, i) => `<col min="${i + 1}" max="${i + 1}" width="${b}" customWidth="1"/>`).join("")}</cols>
+<sheetData>${daten}</sheetData>
+<autoFilter ref="A1:${letzte}"/>
+<pageMargins left="0.7" right="0.7" top="0.78740157499999996" bottom="0.78740157499999996" header="0.3" footer="0.3"/>
+</worksheet>`;
+  const stile = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<fonts count="2"><font><sz val="11"/><name val="Calibri"/><family val="2"/></font><font><b/><sz val="11"/><name val="Calibri"/><family val="2"/></font></fonts>
+<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDCE6F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFE0B2"/><bgColor indexed="64"/></patternFill></fill></fills>
+<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyFill="1"/></cellXfs>
+<cellStyles count="1"><cellStyle name="Standard" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`;
+  return zipErstellen([
+    { name: "[Content_Types].xml", text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>` },
+    { name: "_rels/.rels", text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
+    { name: "xl/workbook.xml", text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Punkte" sheetId="1" r:id="rId1"/></sheets></workbook>` },
+    { name: "xl/_rels/workbook.xml.rels", text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` },
+    { name: "xl/worksheets/sheet1.xml", text: blatt },
+    { name: "xl/styles.xml", text: stile }
+  ]);
+}
+
+$("btn-export").addEventListener("click", () => {
+  const e = ergebnisCache;
+  if (!e || !e.ok) return;
+  const probleme = e.zeilen.filter(c => c.status !== "ok").length;
+  if (probleme && !confirm(`${probleme} Kind(er) haben einen Hinweis (orange markiert). Trotzdem speichern?`)) return;
+  const zeilen = e.zeilen.map(c => [...(e.mitNr ? [c.nr] : []), ...c.namen, ...c.punkte]);
+  const blob = xlsxErstellen(e.kopf, zeilen, e.zeilen.map(c => c.status !== "ok"));
+  let name = ($("dateiname-aus").value || "Punkte_zugeordnet.xlsx").trim().replace(/[\\/:*?"<>|]/g, "_");
+  if (!/\.xlsx$/i.test(name)) name += ".xlsx";
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+});
+
+// ---------- Zurücksetzen ----------
+$("btn-reset").addEventListener("click", () => {
+  Z.pkt = null; Z.kl = null; ergebnisCache = null;
+  for (const art of ["pkt", "kl"]) {
+    $("datei-" + art).value = ""; $("name-" + art).textContent = "";
+    $("cfg-" + art).classList.add("versteckt");
+    $("vorschau-" + art).innerHTML = "";
+  }
+  $("ergebnis").innerHTML = ""; $("meldungen").innerHTML = ""; $("dateiname-aus").value = "";
+  ergebnisNeu();
+});
+
+dateiFeld("pkt");
+dateiFeld("kl");
+ergebnisNeu();
+</script>
+</body>
+</html>
