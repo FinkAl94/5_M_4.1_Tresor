@@ -76,6 +76,7 @@
   td.nr, th.nr { background: #eef3fa; font-weight: 600; text-align: center; }
   tr.kopf td { background: #f1f1f1; color: var(--grau); font-style: italic; }
   tr.ignoriert td { color: #9aa4af; }
+  tr.maxzeile td { font-weight: 600; background: #eef3fa; color: var(--blau-dunkel); }
   td.status-ok { color: var(--ok); }
   td.status-warn { color: var(--warn); background: var(--warn-hell); }
   td.status-fehler { color: var(--fehler); background: var(--fehler-hell); }
@@ -149,6 +150,9 @@
         <label class="feld"><span>Letzte Punktezeile</span><input type="number" id="ende-pkt" min="1" step="1"><small class="hinweis" style="margin:0">Excel-Zeile</small></label>
         <label class="feld"><span>Nummer der Punktezeile ergibt sich aus …</span>
           <select id="modus-pkt"></select>
+        </label>
+        <label class="feld"><span>Zeile mit Höchstpunktzahl (Max. BE)</span>
+          <select id="max-pkt"></select>
         </label>
       </div>
       <div class="feld" style="margin-bottom:10px"><span>Diese Spalten übernehmen</span><div class="chips" id="spalten-pkt"></div></div>
@@ -458,6 +462,9 @@ function punktekopfErkennen(zeilen, bereich) {
   return 0;
 }
 const imBereich = (t, z) => z.r >= t.start && z.r <= t.ende && z.r !== t.kopf;
+const maxKandidaten = t => zeilenVon(t).filter(z => z.r !== t.kopf && !imBereich(t, z) && zahlZeile(z));
+const zeilenBeschriftung = z => z.v.filter(w => typeof w === "string" && !istZahlArtig(w)).join(" ")
+  .replace(/[-=]*>+|:\s*$/g, "").replace(/\s+/g, " ").trim();
 
 // ---------- Zustand ----------
 const Z = {
@@ -481,6 +488,9 @@ function pktAutomatik() {
   }
   // nur Spalten übernehmen, die im Punktebereich etwas enthalten
   const belegt = i => z.some(r => imBereich(t, r) && !leer(r.v[i]));
+  // Zeile mit Höchstpunktzahl: Zahlenzeile außerhalb des Punktebereichs, beschriftet mit „Max“, „BE“ o. Ä.
+  const maxZ = maxKandidaten(t).find(r => /max|höchst|\bbe\b/i.test(zeilenBeschriftung(r)));
+  t.maxZeile = maxZ ? maxZ.r : 0;
   t.spalten = new Set([...Array(n).keys()].filter(i => i !== t.modus && belegt(i)));
 }
 
@@ -565,6 +575,11 @@ function pktZeigen() {
   sel.add(new Option("Position der Zeile (1. Punktezeile = Nr. 1)", "pos"));
   namen.forEach((h, i) => sel.add(new Option(`Nummernspalte: ${h}`, i)));
   sel.value = t.modus;
+  const ms = $("max-pkt"); ms.innerHTML = "";
+  ms.add(new Option("keine", 0));
+  maxKandidaten(t).forEach(r => ms.add(new Option(`Excel-Zeile ${r.r}${zeilenBeschriftung(r) ? ": " + zeilenBeschriftung(r) : ""}`, r.r)));
+  ms.value = maxKandidaten(t).some(r => r.r === t.maxZeile) ? t.maxZeile : 0;
+  t.maxZeile = +ms.value;
   chips($("spalten-pkt"), namen, t.spalten, t.modus === "pos" ? -1 : t.modus, () => { pktVorschau(); ergebnisNeu(); });
   pktVorschau();
 }
@@ -584,6 +599,7 @@ function klZeigen() {
 $("blatt-pkt").addEventListener("change", e => { Z.pkt.blatt = +e.target.value; pktAutomatik(); allesNeu(); });
 $("blatt-kl").addEventListener("change", e => { Z.kl.blatt = +e.target.value; klAutomatik(); allesNeu(); });
 $("kopf-pkt").addEventListener("change", e => { Z.pkt.kopf = Math.max(0, parseInt(e.target.value, 10) || 0); allesNeu(); });
+$("max-pkt").addEventListener("change", e => { Z.pkt.maxZeile = +e.target.value; allesNeu(); });
 $("start-pkt").addEventListener("change", e => { const t = Z.pkt; t.start = Math.max(1, parseInt(e.target.value, 10) || 1); if (t.ende < t.start) t.ende = t.start; allesNeu(); });
 $("ende-pkt").addEventListener("change", e => { const t = Z.pkt; t.ende = Math.max(t.start, parseInt(e.target.value, 10) || t.start); allesNeu(); });
 $("kopf-kl").addEventListener("change",e => { Z.kl.kopf = Math.max(0, parseInt(e.target.value, 10) || 0); allesNeu(); });
@@ -636,11 +652,11 @@ function pktVorschau() {
   const nrVonZeile = new Map([...karte].map(([nr, r]) => [r.r, nr]));
   const kopf = [{ text: "Excel-Zeile" }, { text: "→ Nr.", klasse: "nr" }, ...namen.map(h => ({ text: h }))];
   const zeilen = z.map(r => {
-    const istKopf = r.r === t.kopf, aussen = !istKopf && !imBereich(t, r);
+    const istKopf = r.r === t.kopf, istMax = r.r === t.maxZeile, aussen = !istKopf && !istMax && !imBereich(t, r);
     const nr = nrVonZeile.get(r.r);
     return {
-      klasse: istKopf ? "kopf" : (aussen ? "ignoriert" : ""),
-      zellen: [{ text: r.r }, { text: istKopf ? "Kopf" : (nr ?? "–"), klasse: "nr" },
+      klasse: istKopf ? "kopf" : (istMax ? "maxzeile" : (aussen ? "ignoriert" : "")),
+      zellen: [{ text: r.r }, { text: istKopf ? "Kopf" : (istMax ? "Max." : (nr ?? "–")), klasse: "nr" },
         ...Array.from({ length: n }, (_, i) => ({ text: anzeige(r.v[i]), klasse: typeof r.v[i] === "number" ? "zahl" : "" }))]
     };
   });
@@ -718,11 +734,17 @@ function ergebnisBerechnen() {
     kinderListe.sort((a, b) => { for (let i = 0; i < a.namen.length; i++) { const d = vgl.compare(a.namen[i], b.namen[i]); if (d) return d; } return a.pos - b.pos; });
   }
 
+  let maxEintrag = null;
+  const mz = p.maxZeile ? pz.find(r => r.r === p.maxZeile) : null;
+  if (mz) maxEintrag = {
+    nr: null, namen: nSpalten.map((_, i) => i === 0 ? (zeilenBeschriftung(mz) || "Max. BE") : ""),
+    punkte: pSpalten.map(i => mz.v[i] ?? null), status: "max", info: "Höchstpunktzahl"
+  };
   const mitNr = $("mit-nr").value === "ja";
   const kopf = [...(mitNr ? ["Nr."] : []), ...nSpalten.map(i => k.kopf ? kNamen[i] : (nSpalten.length === 1 ? "Name" : kNamen[i])), ...pSpalten.map(i => pNamen[i])];
   meldungen.unshift({ art: okAnzahl === kinderListe.length ? "ok" : "warn",
     text: `${okAnzahl} von ${kinderListe.length} Kindern vollständig zugeordnet · ${karte.size} Punktezeilen gelesen.` });
-  return { meldungen, kopf, mitNr, zeilen: kinderListe, ok: kinderListe.length > 0 };
+  return { meldungen, kopf, mitNr, maxEintrag, zeilen: kinderListe, ok: kinderListe.length > 0 };
 }
 
 function ergebnisNeu() {
@@ -739,11 +761,11 @@ function ergebnisNeu() {
   if (e.meldungen.length > max) { const li = document.createElement("li"); li.className = "warn"; li.textContent = `… und ${e.meldungen.length - max} weitere Hinweise.`; ul.append(li); }
   tabelleBauen($("ergebnis"),
     [...e.kopf.map((h, i) => ({ text: h, klasse: e.mitNr && i === 0 ? "nr" : "" })), { text: "Status" }],
-    e.zeilen.map(c => ({ zellen: [
+    [...(e.maxEintrag ? [e.maxEintrag] : []), ...e.zeilen].map(c => ({ klasse: c.status === "max" ? "maxzeile" : "", zellen: [
       ...(e.mitNr ? [{ text: c.nr ?? "", klasse: "nr" }] : []),
       ...c.namen.map(n => ({ text: n })),
       ...c.punkte.map(v => ({ text: anzeige(v), klasse: typeof v === "number" ? "zahl" : "" })),
-      { text: c.info, klasse: "status-" + c.status }
+      { text: c.info, klasse: c.status === "max" ? "" : "status-" + c.status }
     ] })));
   $("btn-export").disabled = !e.ok;
 }
@@ -790,7 +812,7 @@ const xmlEsc = s => String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 function xlsxErstellen(kopf, zeilen, markierung) {
-  // markierung[i] = true -> Zeile farbig hervorheben (Problem bei der Zuordnung)
+  // markierung[i] = Stilnummer: 0 normal, 2 orange (Problem), 3 fett/grau (Max. BE)
   const zelle = (ref, v, stil) => {
     const s = stil ? ` s="${stil}"` : "";
     if (leer(v)) return stil ? `<c r="${ref}"${s}/>` : "";
@@ -800,7 +822,7 @@ function xlsxErstellen(kopf, zeilen, markierung) {
   const breiten = kopf.map((h, i) => Math.min(45, Math.max(6, String(h).length + 2, ...zeilen.map(z => String(z[i] ?? "").length + 2))));
   let daten = `<row r="1">${kopf.map((h, i) => zelle(spaltenBuchstabe(i) + "1", h, 1)).join("")}</row>`;
   zeilen.forEach((z, j) => {
-    const r = j + 2, stil = markierung[j] ? 2 : 0;
+    const r = j + 2, stil = markierung[j] || 0;
     daten += `<row r="${r}">${z.map((v, i) => zelle(spaltenBuchstabe(i) + r, v, stil)).join("")}</row>`;
   });
   const letzte = spaltenBuchstabe(kopf.length - 1) + (zeilen.length + 1);
@@ -817,10 +839,10 @@ function xlsxErstellen(kopf, zeilen, markierung) {
   const stile = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <fonts count="2"><font><sz val="11"/><name val="Calibri"/><family val="2"/></font><font><b/><sz val="11"/><name val="Calibri"/><family val="2"/></font></fonts>
-<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDCE6F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFE0B2"/><bgColor indexed="64"/></patternFill></fill></fills>
+<fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDCE6F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFE0B2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEDEDED"/><bgColor indexed="64"/></patternFill></fill></fills>
 <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyFill="1"/></cellXfs>
+<cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyFill="1"/><xf numFmtId="0" fontId="1" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs>
 <cellStyles count="1"><cellStyle name="Standard" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
   return zipErstellen([
@@ -842,8 +864,9 @@ $("btn-export").addEventListener("click", () => {
   if (!e || !e.ok) return;
   const probleme = e.zeilen.filter(c => c.status !== "ok").length;
   if (probleme && !confirm(`${probleme} Kind(er) haben einen Hinweis (orange markiert). Trotzdem speichern?`)) return;
-  const zeilen = e.zeilen.map(c => [...(e.mitNr ? [c.nr] : []), ...c.namen, ...c.punkte]);
-  const blob = xlsxErstellen(e.kopf, zeilen, e.zeilen.map(c => c.status !== "ok"));
+  const alleZeilen = [...(e.maxEintrag ? [e.maxEintrag] : []), ...e.zeilen];
+  const zeilen = alleZeilen.map(c => [...(e.mitNr ? [c.nr] : []), ...c.namen, ...c.punkte]);
+  const blob = xlsxErstellen(e.kopf, zeilen, alleZeilen.map(c => c.status === "max" ? 3 : (c.status !== "ok" ? 2 : 0)));
   let name = ($("dateiname-aus").value || "Punkte_zugeordnet.xlsx").trim().replace(/[\\/:*?"<>|]/g, "_");
   if (!/\.xlsx$/i.test(name)) name += ".xlsx";
   const url = URL.createObjectURL(blob);
