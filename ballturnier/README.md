@@ -25,7 +25,7 @@ Alles lässt sich je Turnier ändern.
 7. **Platzierungsspiele**: 1. A gegen 1. B, 2. A gegen 2. B usw.; der Sieger des ersten Spiels ist Turniersieger.
    - Gruppe C bekommt ein Sonderspiel mit frei wählbaren Namen (voreingestellt „Allstars Gruppe C – Allstars“). Ihre Platzierung ergibt sich aus den Vorrundenpunkten.
    - Klassen ohne Gegenplatz (z. B. 5. Gruppe B) bekommen ein Zusatzspiel mit frei wählbarem Gegner, ohne Einfluss auf die Platzierung.
-   - Die Sportart ist je Spiel frei wählbar. Bei Unentschieden wird der Sieger mit Vermerk festgelegt.
+   - Sportart und Halle sind je Spiel frei und unabhängig voneinander wählbar; die Vorrunden-Sportart einer Halle steht nur als Hinweis dabei. Bei Unentschieden wird der Sieger mit Vermerk festgelegt.
    - Spiele aussetzen: Über „Gespielt werden“ (z. B. nur 1. gegen 1. oder bis 3. gegen 3.) oder je Spiel über das Häkchen „spielen“. Ausgesetzte Paarungen erhalten ihren Platz nach Vorrundenpunkten (wahlweise geteilter Platz). Spiele mit Ergebnis lassen sich nicht aussetzen.
 8. **Urkunden**: Vorlage hochladen (PNG, JPG oder PDF), Textfelder verschieben, Platzhalter wie `{klasse}` und `{platzText}` verwenden. Danach eine PDF mit allen, nur den besten oder einzelnen Urkunden.
 

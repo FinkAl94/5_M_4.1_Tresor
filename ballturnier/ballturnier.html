@@ -484,6 +484,8 @@ const parcoursAktiv = () => !!(S.parcours && S.parcours.aktiv && parcoursSport()
 const parcoursKap = () => Math.max(1, Math.min(12, ganz(S.parcours?.proRunde, 2)));
 /** Sportarten, die in diesem Turnier geplant werden (Ballsportarten + ggf. Parcours). */
 const aktiveSportarten = () => S.sportarten.filter(s => !s.einzel || parcoursAktiv());
+/** Platzierungsspiel in einer Halle, deren Vorrunden-Sportart abweicht (z. B. Basketball in T2). */
+const sportWeichtAb = sp => { const h = S.hallen.find(x => x.id === sp.hallenId); return !!h && h.sportart !== sp.sportart; };
 const hatErgebnis = sp => (istParcours(sp) ? sp.punkte !== null && sp.punkte !== undefined
   : sp.toreA !== null && sp.toreA !== undefined && sp.toreB !== null && sp.toreB !== undefined);
 const vorrundenSpiele = () => S.spiele.filter(sp => sp.phase === 'vorrunde');
@@ -1250,7 +1252,7 @@ const Planer = {
         if (!h.has(sp.hallenId)) h.set(sp.hallenId, []); h.get(sp.hallenId).push(sp.id);
       });
       k.forEach((ids, id) => { if (ids.length > 1) out.push({ slot, art: 'klasse', text: `Runde ${slot + 1}: ${klasseName(id)} ist ${ids.length}× eingeplant`, ids }); });
-      h.forEach((ids, id) => { if (ids.length > (istEinzelSport(halleVon(id)?.sportart) ? parcoursKap() : 1)) out.push({ slot, art: 'halle', text: `Runde ${slot + 1}: ${halleVon(id)?.name || 'Halle'} ist ${ids.length}× belegt`, ids }); });
+      h.forEach((ids, id) => { if (ids.length > (liste.filter(x => x.hallenId === id).every(istParcours) ? parcoursKap() : 1)) out.push({ slot, art: 'halle', text: `Runde ${slot + 1}: ${halleVon(id)?.name || 'Halle'} ist ${ids.length}× belegt`, ids }); });
     });
     return out;
   },
@@ -1426,7 +1428,8 @@ const Playoff = {
     const spiele = this.aktive();
     const finaleZuletzt = S.playoff.finaleZuletzt && spiele.length > 1;
     const istFinale = g => istPaar(g) && g.nr === 1;
-    const passt = g => { const h = halleVon(g.hallenId); return h && h.sportart === g.sportart && g.slot !== null && g.slot !== undefined; };
+    // Platzierungsspiele dürfen in jeder Halle stattfinden – eine vorhandene Zuordnung bleibt bestehen
+    const passt = g => !!halleVon(g.hallenId) && g.slot !== null && g.slot !== undefined;
     const fix = spiele.filter(g => hatErgebnis(g) || (!alleNeu && passt(g) && !(finaleZuletzt && istFinale(g))));
     const frei = this.reihenfolge(spiele.filter(g => !fix.includes(g)));
     const belegt = new Set(), klassen = new Set();
@@ -1434,7 +1437,10 @@ const Playoff = {
     fix.forEach(merke);
     const finale = finaleZuletzt ? frei.find(istFinale) : null;
     const setze = (g, ab) => {
-      const hallen = S.hallen.filter(h => h.sportart === g.sportart);
+      // automatisch: bevorzugt Hallen mit gleicher Vorrunden-Sportart; gibt es keine, dann eine beliebige Spielhalle
+      let hallen = S.hallen.filter(h => h.sportart === g.sportart);
+      if (!hallen.length) hallen = S.hallen.filter(h => !istEinzelSport(h.sportart));
+      if (!hallen.length) hallen = S.hallen.slice();
       if (!hallen.length) { g.hallenId = null; g.slot = null; return; }
       for (let t = ab; t < 500; t++) {
         if ([g.klasseA, g.klasseB].some(k => k && klassen.has(t + '|' + k))) continue;
@@ -1445,7 +1451,7 @@ const Playoff = {
     frei.forEach(g => { if (g !== finale) setze(g, 0); });
     if (finale) setze(finale, Math.max(-1, ...spiele.filter(g => g !== finale && g.slot !== null && g.slot !== undefined).map(g => g.slot)) + 1);
   },
-  ohneHalle() { return this.aktive().filter(g => !S.hallen.some(h => h.sportart === g.sportart)); }
+  ohneHalle() { return this.aktive().filter(g => !halleVon(g.hallenId) || g.slot === null || g.slot === undefined); }
 };
 
 const Endstand = {
@@ -1583,7 +1589,7 @@ const PDF = {
     if (mitErg && hatErgebnis(sp)) t += `   ${sp.toreA} : ${sp.toreB}`;
     return t;
   },
-  zusatz(sp) { return sp.phase === 'playoff' ? Playoff.zusatzText(sp) : spielGruppenText(sp); },
+  zusatz(sp) { return sp.phase === 'playoff' ? Playoff.zusatzText(sp) + (sportWeichtAb(sp) ? ` · ${sportName(sp.sportart)}` : '') : spielGruppenText(sp); },
   farbe(sp) { return sp.phase === 'playoff' ? this.BLAU_HELL : ([this.GA, this.GB, this.GC][gruppeIdx(spielGruppe(sp))] || this.GX); },
   spieleMitRunde(phase) { return S.spiele.filter(sp => sp.phase === phase && sp.slot !== null && sp.slot !== undefined && halleVon(sp.hallenId)); },
 
@@ -1676,10 +1682,12 @@ const PDF = {
       doc.setFont('helvetica', 'bold'); doc.setFontSize(26); doc.setTextColor(...this.BLAU);
       doc.text(h.name, 10, 36);
       doc.setFontSize(18); doc.setTextColor(60, 70, 85);
-      doc.text(sportName(h.sportart), doc.internal.pageSize.getWidth() - 10, 36, { align: 'right' });
+      const liste = spiele.filter(sp => sp.hallenId === h.id).sort((a, b) => a.slot - b.slot);
+      // Platzierungsspiele: Sportart(en) der Spiele in dieser Halle, sonst die Sportart der Halle
+      const sportKopf = phase === 'playoff' ? [...new Set(liste.map(sp => sportName(sp.sportart)))].join(' / ') : sportName(h.sportart);
+      doc.text(sportKopf || sportName(h.sportart), doc.internal.pageSize.getWidth() - 10, 36, { align: 'right' });
       doc.setTextColor(0, 0, 0);
       const body = [];
-      const liste = spiele.filter(sp => sp.hallenId === h.id).sort((a, b) => a.slot - b.slot);
       let letzte = -1;
       const station = istEinzelSport(h.sportart);
       liste.forEach(sp => {
@@ -2486,7 +2494,7 @@ function rasterHTML(phase) {
 }
 function spielKarte(sp, konf) {
   const erg = hatErgebnis(sp) ? `<span class="erg">${istParcours(sp) ? fmtZahl(sp.punkte) + ' P.' : sp.toreA + ':' + sp.toreB}</span>` : '';
-  const info = (sp.phase === 'playoff' ? esc(Playoff.bezeichnung(sp)) : esc(spielGruppenText(sp))) + (sp.slot === null || !halleVon(sp.hallenId) ? ' · ' + esc(sportName(sp.sportart)) : '');
+  const info = (sp.phase === 'playoff' ? esc(Playoff.bezeichnung(sp)) : esc(spielGruppenText(sp))) + (sp.slot === null || !halleVon(sp.hallenId) || sportWeichtAb(sp) ? ' · ' + esc(sportName(sp.sportart)) : '');
   return `<div class="spiel ${sp.phase === 'playoff' ? 'po' : gruppeKlasse(spielGruppe(sp))} ${UI.auswahl === sp.id ? 'gewaehlt' : ''} ${konf && konf.has(sp.id) ? 'konflikt' : ''}" data-spiel="${sp.id}" draggable="true" title="${esc(sportName(sp.sportart))}">
     <div class="paar">${istParcours(sp) ? esc(klasseName(sp.klasseA)) : `${esc(teamName(sp, 'A'))} – ${esc(teamName(sp, 'B'))}`}</div><div class="info"><span>${info}</span>${erg}</div></div>`;
 }
@@ -2584,9 +2592,9 @@ function klassenKonflikte(phase, zuege) {
 async function spielVerschieben(id, slot, hallenId) {
   const sp = S.spiele.find(x => x.id === id), h = halleVon(hallenId);
   if (!sp || !h) return UI.render();
-  if (h.sportart !== sp.sportart) { UI.toast(`${h.name} ist für ${sportName(h.sportart)} eingeteilt – dieses Spiel ist ${sportName(sp.sportart)}.`, 'fehler', 5000); return UI.render(); }
+  if (sp.phase !== 'playoff' && h.sportart !== sp.sportart) { UI.toast(`${h.name} ist für ${sportName(h.sportart)} eingeteilt – dieses Spiel ist ${sportName(sp.sportart)}.`, 'fehler', 5000); return UI.render(); }
   const belegtListe = S.spiele.filter(x => x !== sp && x.phase === sp.phase && x.slot === slot && x.hallenId === hallenId);
-  const kapHalle = istEinzelSport(h.sportart) ? parcoursKap() : 1;
+  const kapHalle = istParcours(sp) ? parcoursKap() : 1;
   if (belegtListe.length >= kapHalle) return spieleTauschen(id, belegtListe[0].id);
   const k = klassenKonflikte(sp.phase, [[sp, slot]]);
   if (k.length && !(await UI.frage('Konflikt', `<p>${k.map(esc).join('<br>')}</p><p>Trotzdem verschieben? Der Konflikt wird rot markiert.</p>`, 'Trotzdem verschieben'))) return UI.render();
@@ -2597,7 +2605,7 @@ async function spieleTauschen(id1, id2) {
   const a = S.spiele.find(x => x.id === id1), b = S.spiele.find(x => x.id === id2);
   if (!a || !b || a.phase !== b.phase) return UI.render();
   const ha = halleVon(a.hallenId), hb = halleVon(b.hallenId);
-  if (!ha || !hb || hb.sportart !== a.sportart || ha.sportart !== b.sportart || a.slot === null || b.slot === null) {
+  if (!ha || !hb || (a.phase !== 'playoff' && (hb.sportart !== a.sportart || ha.sportart !== b.sportart)) || a.slot === null || b.slot === null) {
     UI.toast('Tausch nicht möglich: Die Sportarten passen nicht zu den Hallen.', 'fehler', 5000); return UI.render();
   }
   const k = klassenKonflikte(a.phase, [[a, b.slot], [b, a.slot]]);
@@ -2770,7 +2778,7 @@ UI.RENDER.playoffs = () => {
   else if (offen) hinweise.push(`In der Vorrunde sind noch ${offen} Spiele offen – Paarungen sind vorläufig.`);
   if (gleich) hinweise.push('In der Tabelle gibt es noch Gleichstände (Schritt 6).');
   if (abw.length) hinweise.push('Die Paarungen entsprechen nicht mehr der aktuellen Tabelle: ' + abw.map(esc).join('; ') + '. → „Paarungen aus Tabelle übernehmen“.');
-  Playoff.ohneHalle().forEach(g => hinweise.push(`${esc(Playoff.bezeichnung(g))}: keine Halle für ${esc(sportName(g.sportart))}.`));
+  Playoff.ohneHalle().forEach(g => hinweise.push(`${esc(Playoff.bezeichnung(g))}: noch keine Halle/Runde zugewiesen.`));
   const nv = Planer.anzahlRunden('vorrunde');
   html += `<div class="karte"><h3 style="margin-top:0">Ablauf und Zeiten</h3>
     <div class="zeile">
@@ -2822,7 +2830,7 @@ UI.RENDER.playoffs = () => {
       return `<tr data-zeile="${g.id}"><td><label class="check"><input type="checkbox" data-c="po-spielen" data-id="${g.id}" checked ${erg ? 'disabled title="Ergebnis eingetragen – kann nicht ausgesetzt werden"' : ''}> spielen</label><br><b>${esc(Playoff.bezeichnung(g))}</b>${g.art === 'sonder' ? `<br><button class="btn btn-klein btn-gefahr" data-a="po-sonder-weg" data-id="${g.id}" style="margin-top:.3rem">Entfernen</button>` : ''}</td>
         <td style="min-width:190px">${paarung(g)}</td>
         <td><select data-c="po-sport" data-id="${g.id}" ${erg ? 'disabled title="Ergebnis eingetragen – Sportart fest"' : ''}>${optionen(spielSportarten().map(s => [s.id, s.name]), g.sportart)}</select></td>
-        <td><select data-c="po-halle" data-id="${g.id}">${hallen.length ? optionen(hallen.map(h => [h.id, h.name]), g.hallenId) : '<option>– keine Halle –</option>'}</select></td>
+        <td><select data-c="po-halle" data-id="${g.id}" aria-label="Halle">${halleVon(g.hallenId) ? '' : '<option value="">– Halle wählen –</option>'}${optionen(S.hallen.map(h => [h.id, h.sportart === g.sportart ? h.name : `${h.name} (Vorrunde: ${sportName(h.sportart)})`]), g.hallenId || '')}</select></td>
         <td><select data-c="po-runde" data-id="${g.id}">${optionen(rundenOpt, g.slot ?? '')}</select></td>
         <td>${torFelder(g)}
           ${istPaar(g) ? `<div data-sieger="${g.id}" ${unent ? '' : 'hidden'} style="margin-top:.4rem">
@@ -2912,21 +2920,24 @@ AENDERUNG['po-sport'] = el => {
   const g = poSpiel(el.dataset.id);
   if (hatErgebnis(g)) { el.value = g.sportart; return; }
   g.sportart = el.value; if (istPaar(g)) S.playoff.sportWahl[g.nr] = el.value;
-  const h = halleVon(g.hallenId);
-  if (!h || h.sportart !== g.sportart) { g.slot = null; g.hallenId = null; }
-  Playoff.planen(false);
+  // Halle und Runde bleiben unverändert (Halle frei wählbar); nur ein Spiel ohne Halle wird neu verteilt
+  if (!halleVon(g.hallenId)) Playoff.planen(false);
   geaendert();
 };
 AENDERUNG['po-halle'] = el => {
   const g = poSpiel(el.dataset.id);
-  if (playoffSpiele().some(o => o !== g && o.slot === g.slot && o.hallenId === el.value)) UI.toast('Achtung: Diese Halle ist in dieser Runde schon belegt (rot markiert).', 'fehler', 5000);
+  if (!el.value) return;
+  if (g.slot === null || g.slot === undefined) g.slot = 0;
+  if (Playoff.aktive().some(o => o !== g && o.slot === g.slot && o.hallenId === el.value)) UI.toast('Achtung: Diese Halle ist in dieser Runde schon belegt (rot markiert). Ggf. Runde ändern oder Spiele tauschen.', 'fehler', 6000);
   g.hallenId = el.value; geaendert();
 };
 AENDERUNG['po-runde'] = el => {
   const g = poSpiel(el.dataset.id), t = ganz(el.value, 0);
   if (playoffSpiele().some(o => o !== g && o.slot === t && o.hallenId === g.hallenId)) {
-    const frei = S.hallen.find(x => x.sportart === g.sportart && !playoffSpiele().some(o => o !== g && o.slot === t && o.hallenId === x.id));
-    if (frei) g.hallenId = frei.id; else UI.toast('Achtung: Keine freie passende Halle in dieser Runde (rot markiert).', 'fehler', 5000);
+    const istFrei = x => !Playoff.aktive().some(o => o !== g && o.slot === t && o.hallenId === x.id);
+    const frei = S.hallen.find(x => x.sportart === g.sportart && istFrei(x)) || S.hallen.find(x => !istEinzelSport(x.sportart) && istFrei(x));
+    if (frei) { g.hallenId = frei.id; UI.toast(`Halle war belegt – Spiel liegt jetzt in ${frei.name}.`, '', 4000); }
+    else UI.toast('Achtung: In dieser Runde ist keine Halle mehr frei (rot markiert).', 'fehler', 5000);
   }
   const k = klassenKonflikte('playoff', [[g, t]]);
   if (k.length) UI.toast(k[0], 'fehler', 5000);
