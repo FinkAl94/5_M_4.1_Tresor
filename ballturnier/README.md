@@ -5,7 +5,7 @@
 **Voreinstellungen wie beim Turnier 2025:**
 - Felder T1–T2 Fußball, T3–T4 Handball, T5–T6 Basketball.
 - Beginn 8:40, 10 Min. Spiel und 10 Min. Wechsel.
-- 3 Gruppen, jede Klasse spielt jede Sportart 2×.
+- 3 Gruppen, a-Klassen in Gruppe C; jede Klasse spielt jede Sportart 2×.
 - 1 Punkt pro Tor bzw. Korb.
 - Platzierungsspiele nach „Treffen in Halle 3“, danach Siegerehrung.
 
@@ -15,7 +15,7 @@ Alles lässt sich je Turnier ändern.
 
 1. **Rahmendaten**: Turniername und Datum. Turniermodus: „feste Anzahl Spiele je Sportart“ (wie 2025) oder „jeder gegen jeden in jeder Sportart“. Dazu Hallen/Felder mit Sportart, Zeiten und Blockpausen. Der Überblick zeigt, ob alles ins Zeitfenster passt.
 2. **Klassen**: Mehrere auf einmal eingeben, z. B. `8Ga 8Gb 8Ra` (oder eine Spalte aus Excel einfügen), dann Enter.
-3. **Gruppen**: 1 bis 3 Gruppen anlegen und „Automatisch verteilen“. Anpassen geht per Ziehen mit der Maus oder über das Auswahlfeld an der Klasse.
+3. **Gruppen**: 1 bis 3 Gruppen anlegen und „Automatisch verteilen“. Voreingestellt wie 2025: Alle Klassen, die auf **a** enden (8Ga, 8Ra, 8Ma …), kommen in **Gruppe C**, die übrigen zufällig und möglichst gleich groß in A und B. Buchstabe und Zielgruppe sind einstellbar. Anpassen geht per Ziehen mit der Maus oder über das Auswahlfeld an der Klasse.
 4. **Spielplan**: „Spielplan erzeugen“ berechnet die Vorrunde automatisch. Gegner kommen aus der eigenen Gruppe; bei ungerader Gruppengröße spielt je Runde eine Klasse gegen eine andere Gruppe, wie 2025 bei B und C. Ziele: keine Doppelbelegung, möglichst wenige Runden, wechselnde Sportarten und Gegner.
    - Verschieben: Spiel antippen, dann ein freies Feld oder ein anderes Spiel (Tausch) antippen.
    - PDF: Gesamtplan, **Gesamtablauf** (Vorrunde, Treffen, Platzierungsspiele, Siegerehrung auf einer Seite), Pläne je Feld und Laufzettel je Klasse.

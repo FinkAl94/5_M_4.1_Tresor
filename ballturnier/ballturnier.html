@@ -387,6 +387,8 @@ function neuerStand() {
       blockpausen: [],                             // [{id, name, beginn:'10:00', dauer:20}]
       vorrundenModus: 'jeSportart',                // 'jeSportart' (2025) oder 'jederGegenJeden'
       spieleJeSportart: 2,                         // nur Modus 'jeSportart'
+      verteilBuchstabe: 'a',                       // Gruppenverteilung: Klassen mit diesem Endbuchstaben …
+      verteilZielGruppe: 'gC',                     // … kommen in diese Gruppe (2025: a-Klassen → Gruppe C)
       playoffsAktiv: true,
       tieBreak: ['punkte', 'diff', 'direkt', 'manuell', 'tore', 'siege'].map(id => ({ id, an: !['tore', 'siege'].includes(id) })),
       punkteSchema: schema,
@@ -2092,7 +2094,13 @@ AKTION['klassen-alle-loeschen'] = async () => {
 };
 
 /* ---------------- Schritt 3: Gruppen ---------------- */
-UI.verteilung = 'zufall';
+UI.verteilung = 'buchstabe';
+/** Klassen, deren Bezeichnung auf den eingestellten Buchstaben endet (z. B. 8Ga, 8Ma, 8Ra bei „a“). */
+function klassenMitBuchstabe() {
+  const b = String(S.einstellungen.verteilBuchstabe || '').trim().toLowerCase();
+  return b ? S.klassen.filter(k => k.name.trim().toLowerCase().endsWith(b)) : [];
+}
+function verteilZielGruppe() { return S.gruppen.find(g => g.id === S.einstellungen.verteilZielGruppe) || S.gruppen[S.gruppen.length - 1]; }
 UI.RENDER.gruppen = () => {
   const ohne = S.klassen.filter(k => !gruppeVon(k.id));
   const nS = S.sportarten.length;
@@ -2124,9 +2132,13 @@ UI.RENDER.gruppen = () => {
         <button class="btn" data-a="gruppen-anzahl" data-n="3" aria-pressed="${S.gruppen.length === 3}">3 Gruppen</button>
       </div>
       <span class="trenner"></span>
-      <select data-c="verteilung" aria-label="Art der Verteilung">${optionen([['zufall', 'zufällig'], ['block', 'nach Reihenfolge (blockweise)'], ['abwechselnd', 'nach Reihenfolge (abwechselnd)']], UI.verteilung)}</select>
+      <select data-c="verteilung" aria-label="Art der Verteilung">${optionen([['buchstabe', 'nach Buchstabe in eigene Gruppe, Rest zufällig'], ['zufall', 'zufällig'], ['block', 'nach Reihenfolge (blockweise)'], ['abwechselnd', 'nach Reihenfolge (abwechselnd)']], UI.verteilung)}</select>
       <button class="btn btn-primaer" data-a="gruppen-verteilen" ${S.klassen.length < 2 ? 'disabled' : ''}>Automatisch verteilen</button>
     </div>
+    ${UI.verteilung === 'buchstabe' ? (S.gruppen.length < 2 ? '<div class="hinweis warn">Diese Verteilung braucht mindestens 2 Gruppen.</div>' : `<div class="zeile">
+      <label>Klassen mit Endbuchstabe <input type="text" maxlength="3" class="kurz" value="${esc(S.einstellungen.verteilBuchstabe || '')}" data-c="verteil-buchstabe" aria-label="Buchstabe"></label>
+      <label>kommen in <select data-c="verteil-ziel" aria-label="Zielgruppe">${optionen(S.gruppen.map(g => [g.id, g.name]), verteilZielGruppe().id)}</select></label>
+      <span class="klein">${(() => { const t = klassenMitBuchstabe(); return t.length ? `${t.length} Klasse${t.length === 1 ? '' : 'n'}: ${t.map(k => esc(k.name)).join(', ')}` : 'derzeit keine passende Klasse'; })()} · übrige Klassen zufällig und möglichst gleich groß auf die anderen Gruppen</span></div>`) : ''}
     <p class="klein">Verteilung beliebig oft wiederholbar. Danach anpassen: Klasse mit der Maus in die andere Gruppe ziehen (auf eine Klasse ziehen = tauschen) oder über das Auswahlfeld an der Klasse.</p>
     ${!S.klassen.length ? '<div class="hinweis">Zuerst in Schritt 2 Klassen anlegen.</div>' : ''}
   </div>
@@ -2134,7 +2146,9 @@ UI.RENDER.gruppen = () => {
   ${ohne.length ? `<div class="karte gruppe-karte ohne"><h3>Noch keiner Gruppe zugeordnet (${ohne.length})</h3>
     <div class="chipliste" data-dropgruppe="">${ohne.map(k => chip(k, '')).join('')}</div></div>` : ''}`;
 };
-AENDERUNG.verteilung = el => { UI.verteilung = el.value; };
+AENDERUNG.verteilung = el => { UI.verteilung = el.value; UI.render(); };
+AENDERUNG['verteil-buchstabe'] = el => { S.einstellungen.verteilBuchstabe = el.value.trim(); geaendert(); };
+AENDERUNG['verteil-ziel'] = el => { S.einstellungen.verteilZielGruppe = el.value; geaendert(); };
 AENDERUNG['gruppe-name'] = el => { const g = S.gruppen.find(x => x.id === el.dataset.id); g.name = el.value.trim() || g.name; geaendert(); };
 AKTION['gruppen-anzahl'] = async el => {
   const n = +el.dataset.n;
@@ -2148,11 +2162,21 @@ AKTION['gruppen-anzahl'] = async el => {
   geaendert();
 };
 AKTION['gruppen-verteilen'] = async () => {
+  if (UI.verteilung === 'buchstabe' && S.gruppen.length > 1 && !klassenMitBuchstabe().length) {
+    UI.toast(`Keine Klasse endet auf „${S.einstellungen.verteilBuchstabe || ''}“ – bitte Buchstaben prüfen.`, 'fehler', 5000); return;
+  }
   if (!(await strukturAenderungOk('Die automatische Verteilung'))) return;
   let ids = S.klassen.map(k => k.id);
   if (UI.verteilung === 'zufall') mischen(ids);
   S.gruppen.forEach(g => { g.klassenIds = []; });
   if (S.gruppen.length === 1) S.gruppen[0].klassenIds = ids;
+  else if (UI.verteilung === 'buchstabe') {
+    // Klassen mit dem Buchstaben in die Zielgruppe, übrige zufällig und ausgeglichen auf die anderen Gruppen
+    const ziel = verteilZielGruppe(), treffer = new Set(klassenMitBuchstabe().map(k => k.id));
+    ziel.klassenIds = ids.filter(id => treffer.has(id));
+    const andere = S.gruppen.filter(g => g !== ziel), start = Math.floor(Math.random() * andere.length);
+    mischen(ids.filter(id => !treffer.has(id))).forEach((id, i) => andere[(i + start) % andere.length].klassenIds.push(id));
+  }
   else if (UI.verteilung === 'abwechselnd') ids.forEach((id, i) => S.gruppen[i % S.gruppen.length].klassenIds.push(id));
   else {
     const n = S.gruppen.length; let pos = 0;
