@@ -16,7 +16,7 @@
   --blau-900: #0f2d57; --blau-700: #1f4e8c; --blau-500: #2f7fd1; --blau-300: #8fb8e6; --blau-200: #bcd6f2; --blau-100: #e8f0fa; --blau-50: #f4f8fd;
   --grau-900: #1f2a37; --grau-700: #3c4652; --grau-500: #6b7785; --grau-300: #c9d1da; --grau-200: #dfe5ec; --grau-100: #f4f6f9;
   --rot: #b42318; --rot-100: #fdecea; --gelb: #8a5a00; --gelb-100: #fff4d6; --gruen: #1e7a46; --gruen-100: #e3f4ea;
-  --gA: #2f7fd1; --gA-100: #e3eefb; --gB: #c8701c; --gB-100: #fbeedd; --gC: #a23b72; --gC-100: #f8e6ef; --gX: #6b7785;
+  --gA: #2f7fd1; --gA-100: #e3eefb; --gB: #c8701c; --gB-100: #fbeedd; --gC: #a23b72; --gC-100: #f8e6ef; --gD: #0f7c8c; --gD-100: #e0f2f4; --gE: #5a7d1e; --gE-100: #ecf3e0; --gF: #7a3fb0; --gF-100: #f0e7f8; --gG: #8a6d00; --gG-100: #f8f0d6; --gH: #a23b3b; --gH-100: #f8e4e4; --gX: #6b7785;
   --sp-basketball: #c8541c; --sp-handball: #1e7a46; --sp-fussball: #1f4e8c;
   --radius: 10px; --schatten: 0 1px 3px rgba(15,45,87,.12), 0 1px 2px rgba(15,45,87,.06);
   --touch: 44px;
@@ -98,6 +98,11 @@ label.check { display: inline-flex; gap: .5rem; align-items: center; min-height:
 .badge.gA { background: var(--gA-100); color: var(--gA); }
 .badge.gB { background: var(--gB-100); color: var(--gB); }
 .badge.gC { background: var(--gC-100); color: var(--gC); }
+.badge.gD { background: var(--gD-100); color: var(--gD); }
+.badge.gE { background: var(--gE-100); color: var(--gE); }
+.badge.gF { background: var(--gF-100); color: var(--gF); }
+.badge.gG { background: var(--gG-100); color: var(--gG); }
+.badge.gH { background: var(--gH-100); color: var(--gH); }
 .sport { display: inline-flex; align-items: center; gap: .3rem; font-weight: 600; }
 .sport::before { content: ""; width: .7rem; height: .7rem; border-radius: 50%; background: var(--sp-farbe, var(--grau-500)); }
 .sp-basketball { --sp-farbe: var(--sp-basketball); }
@@ -121,6 +126,11 @@ tr.gleichstand td { background: var(--gelb-100); }
 .gruppe-karte { border-top: 5px solid var(--gA); }
 .gruppe-karte.gB { border-top-color: var(--gB); }
 .gruppe-karte.gC { border-top-color: var(--gC); }
+.gruppe-karte.gD { border-top-color: var(--gD); }
+.gruppe-karte.gE { border-top-color: var(--gE); }
+.gruppe-karte.gF { border-top-color: var(--gF); }
+.gruppe-karte.gG { border-top-color: var(--gG); }
+.gruppe-karte.gH { border-top-color: var(--gH); }
 .gruppe-karte.ohne { border-top-color: var(--grau-300); }
 .klassen-liste { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: .5rem; }
 .klassen-liste .eintrag { display: flex; gap: .35rem; align-items: center; background: var(--grau-100); border-radius: 8px; padding: .3rem; }
@@ -141,6 +151,11 @@ tr.gleichstand td { background: var(--gelb-100); }
 .spiel { flex: 1; border-radius: 8px; padding: .35rem .5rem; background: #fff; border: 1px solid var(--grau-300); border-left: 5px solid var(--gA); cursor: pointer; user-select: none; font-size: .92rem; line-height: 1.25; touch-action: manipulation; }
 .spiel.gB { border-left-color: var(--gB); }
 .spiel.gC { border-left-color: var(--gC); }
+.spiel.gD { border-left-color: var(--gD); }
+.spiel.gE { border-left-color: var(--gE); }
+.spiel.gF { border-left-color: var(--gF); }
+.spiel.gG { border-left-color: var(--gG); }
+.spiel.gH { border-left-color: var(--gH); }
 .spiel.gX { border-left-color: var(--gX); border-left-style: dashed; }
 .spiel.po { border-left-color: var(--blau-900); }
 .spiel .paar { font-weight: 700; white-space: nowrap; }
@@ -372,7 +387,8 @@ function standardFelder(ausr = 'hoch') {
 }
 /** Hallen/Felder wie beim Turnier 2025: T1–T2 Fußball, T3–T4 Handball, T5–T6 Basketball. */
 const HALLEN_STANDARD = [['T1', 'fussball'], ['T2', 'fussball'], ['T3', 'handball'], ['T4', 'handball'], ['T5', 'basketball'], ['T6', 'basketball'], ['Halle 7', 'parcours']];
-const MAX_GRUPPEN = 3;
+const MAX_GRUPPEN = 8;
+const GRUPPEN_IDS = ['gA', 'gB', 'gC', 'gD', 'gE', 'gF', 'gG', 'gH'];
 /** Voreinstellungen nach dem Verlaufsplan des Turniers 2025. */
 function neuerStand() {
   const jetzt = Date.now();
@@ -473,7 +489,7 @@ const sportName = id => S.sportarten.find(s => s.id === id)?.name ?? id;
 const halleVon = id => S.hallen.find(h => h.id === id);
 const gruppeVon = klasseId => S.gruppen.find(g => g.klassenIds.includes(klasseId));
 const gruppeIdx = gid => S.gruppen.findIndex(g => g.id === gid);
-const gruppeKlasse = gid => (['gA', 'gB', 'gC'][gruppeIdx(gid)] || 'gX');
+const gruppeKlasse = gid => (GRUPPEN_IDS[gruppeIdx(gid)] || 'gX');
 /** Gruppe eines Spiels: gemeinsame Gruppe beider Klassen, sonst null (gruppenübergreifend). */
 const spielGruppe = sp => {
   if (sp.art === 'parcours') return gruppeVon(sp.klasseA)?.id ?? null;
@@ -1566,7 +1582,8 @@ const Urkunde = {
 };
 
 const PDF = {
-  BLAU: [31, 78, 140], BLAU_HELL: [232, 240, 250], GA: [227, 238, 251], GB: [251, 238, 221], GC: [248, 230, 239], GX: [236, 238, 241], PAUSE: [255, 244, 214],
+  BLAU: [31, 78, 140], BLAU_HELL: [232, 240, 250], GA: [227, 238, 251], GB: [251, 238, 221], GC: [248, 230, 239], GX: [236, 238, 241],
+  GRUPPEN: [[227, 238, 251], [251, 238, 221], [248, 230, 239], [224, 242, 244], [236, 243, 224], [240, 231, 248], [248, 240, 214], [248, 228, 228]], PAUSE: [255, 244, 214],
 
   neu(ausr = 'p') {
     Libs.laden('lib-jspdf'); Libs.laden('lib-autotable');
@@ -1615,7 +1632,7 @@ const PDF = {
     return t;
   },
   zusatz(sp) { return sp.phase === 'playoff' ? Playoff.zusatzText(sp) + (sportWeichtAb(sp) ? ` · ${sportName(sp.sportart)}` : '') : spielGruppenText(sp); },
-  farbe(sp) { return sp.phase === 'playoff' ? this.BLAU_HELL : ([this.GA, this.GB, this.GC][gruppeIdx(spielGruppe(sp))] || this.GX); },
+  farbe(sp) { return sp.phase === 'playoff' ? this.BLAU_HELL : (this.GRUPPEN[gruppeIdx(spielGruppe(sp))] || this.GX); },
   spieleMitRunde(phase) { return S.spiele.filter(sp => sp.phase === phase && sp.slot !== null && sp.slot !== undefined && halleVon(sp.hallenId)); },
 
   /** Tabellenkopf: Sportart über aufeinanderfolgenden Hallen gleicher Sportart (wie im Verlaufsplan), darunter die Hallennamen. */
@@ -1671,7 +1688,7 @@ const PDF = {
       }
       if (n) ende = z.slots[n - 1].ende;
     });
-    if (phasen.includes('playoff') && S.playoff.nachText && ende !== null) zeile(`ab ${minZuZeit(ende)}   ${S.playoff.nachText}`, this.BLAU_HELL);
+    if ((phasen.includes('playoff') || phase === 'alles') && S.playoff.nachText && ende !== null) zeile(`ab ${minZuZeit(ende)}   ${S.playoff.nachText}`, this.BLAU_HELL);
     // gleich breite Hallenspalten
     const breite = (doc.internal.pageSize.getWidth() - 20 - 25 - (frei ? 30 : 0)) / hallen.length;
     const spaltenStil = { 0: { cellWidth: 25 } };
@@ -2137,6 +2154,11 @@ UI.RENDER.rahmen = () => {
     <p class="klein">${Planer.modus() === 'jeSportart'
       ? `Jede Klasse spielt jede Ballsportart ${Planer.spieleJeSportart()}× (zusammen ${Planer.spieleJeSportart() * spielSportarten().length} Spiele)${aktiveStationen().length ? ` und geht je einmal zu: ${aktiveStationen().map(s => esc(s.name)).join(', ')}` : ''}. Gegner kommen aus der eigenen Gruppe; bei ungerader Gruppengröße auch aus einer anderen Gruppe. Gewertet wird je Klasse – gruppenübergreifende Spiele zählen für beide Klassen.`
       : 'Innerhalb jeder Gruppe spielt jede Klasse gegen jede, und zwar in jeder Sportart genau einmal.'}</p>
+    <hr>
+    <label class="check"><input type="checkbox" data-c="rahmen-platzierung" ${S.einstellungen.playoffsAktiv ? 'checked' : ''}> Platzierungsrunde nach der Vorrunde durchführen</label>
+    <p class="klein">${S.einstellungen.playoffsAktiv
+      ? 'Einzelheiten (Paarungen, Zeiten, einzelne Spiele aussetzen) in Schritt 7.'
+      : 'Ohne Platzierungsrunde ergibt sich die Endplatzierung direkt aus der Vorrunden-Tabelle (bei mehreren Gruppen je Gruppe); im Gesamtablauf folgt der Abschluss (z. B. Siegerehrung) direkt auf die Vorrunde.'}</p>
   </div>
   <div class="karte"><h2>Sportarten</h2>
     <div class="tab-scroll"><table class="tab-std"><thead><tr><th>Name</th><th>Art</th><th>Einstellungen</th><th></th></tr></thead><tbody>
@@ -2256,6 +2278,7 @@ AKTION['sport-loeschen'] = async el => {
   geaendert();
   UI.toast(`${s.name} entfernt.`, 'ok');
 };
+AENDERUNG['rahmen-platzierung'] = el => { S.einstellungen.playoffsAktiv = el.checked; geaendert(); };
 AENDERUNG['vr-modus'] = async el => {
   if (!(await strukturAenderungOk('Die Änderung des Turniermodus'))) { el.value = Planer.modus(); return; }
   S.einstellungen.vorrundenModus = el.value; geaendert();
@@ -2381,7 +2404,7 @@ UI.RENDER.gruppen = () => {
     const ungerade = Planer.modus() === 'jeSportart'
       ? 'Ungerade Anzahl: Je Runde spielt eine Klasse dieser Gruppe ggf. gegen eine Klasse einer anderen Gruppe – das plant die App automatisch.'
       : 'Ungerade Anzahl: In jeder Runde hat mindestens eine Klasse dieser Gruppe spielfrei (Freilos) – das berücksichtigt der Spielplan automatisch.';
-    return `<div class="karte gruppe-karte ${['', 'gB', 'gC'][i] || ''}">
+    return `<div class="karte gruppe-karte ${GRUPPEN_IDS[i] || ''}">
       <div class="zeile"><input type="text" value="${esc(g.name)}" data-c="gruppe-name" data-id="${g.id}" aria-label="Gruppenname" style="font-weight:700"><span class="trenner"></span>
         <span class="klein">${info}</span></div>
       <div class="chipliste" data-dropgruppe="${g.id}" style="margin-top:.6rem">${kl.map(k => chip(k, g.id)).join('') || '<span class="klein">Klassen hierher ziehen oder per Auswahl zuordnen.</span>'}</div>
@@ -2393,9 +2416,9 @@ UI.RENDER.gruppen = () => {
     <div class="zeile">
       <span>Anzahl Gruppen</span>
       <div class="umschalter" role="group">
-        <button class="btn" data-a="gruppen-anzahl" data-n="1" aria-pressed="${S.gruppen.length === 1}">1 Gruppe</button>
-        <button class="btn" data-a="gruppen-anzahl" data-n="2" aria-pressed="${S.gruppen.length === 2}">2 Gruppen</button>
-        <button class="btn" data-a="gruppen-anzahl" data-n="3" aria-pressed="${S.gruppen.length === 3}">3 Gruppen</button>
+        <button class="btn btn-icon" data-a="gruppen-anzahl" data-n="${S.gruppen.length - 1}" ${S.gruppen.length <= 1 ? 'disabled' : ''} aria-label="Gruppe entfernen">−</button>
+        <input type="number" min="1" max="${MAX_GRUPPEN}" value="${S.gruppen.length}" data-c="gruppen-anzahl" class="kurz" aria-label="Anzahl Gruppen" style="border-radius:0">
+        <button class="btn btn-icon" data-a="gruppen-anzahl" data-n="${S.gruppen.length + 1}" ${S.gruppen.length >= MAX_GRUPPEN ? 'disabled' : ''} aria-label="Gruppe hinzufügen">+</button>
       </div>
       <span class="trenner"></span>
       <select data-c="verteilung" aria-label="Art der Verteilung">${optionen([['buchstabe', 'nach Buchstabe in eigene Gruppe, Rest zufällig'], ['zufall', 'zufällig'], ['block', 'nach Reihenfolge (blockweise)'], ['abwechselnd', 'nach Reihenfolge (abwechselnd)']], UI.verteilung)}</select>
@@ -2416,17 +2439,23 @@ AENDERUNG.verteilung = el => { UI.verteilung = el.value; UI.render(); };
 AENDERUNG['verteil-buchstabe'] = el => { S.einstellungen.verteilBuchstabe = el.value.trim(); geaendert(); };
 AENDERUNG['verteil-ziel'] = el => { S.einstellungen.verteilZielGruppe = el.value; geaendert(); };
 AENDERUNG['gruppe-name'] = el => { const g = S.gruppen.find(x => x.id === el.dataset.id); g.name = el.value.trim() || g.name; geaendert(); };
-AKTION['gruppen-anzahl'] = async el => {
-  const n = +el.dataset.n;
-  if (n === S.gruppen.length) return;
-  if (S.gruppen.some(g => g.klassenIds.length) && !(await strukturAenderungOk('Die Änderung der Gruppenanzahl'))) return;
+async function gruppenAnzahlSetzen(n) {
+  n = Math.max(1, Math.min(MAX_GRUPPEN, n));
+  if (n === S.gruppen.length) return UI.render();
+  if (n < S.gruppen.length) {
+    const weg = S.gruppen.slice(n).filter(g => g.klassenIds.length);
+    if (weg.length && !(await UI.frage('Gruppen entfernen?', `<p>${weg.map(g => esc(g.name)).join(', ')} ${weg.length === 1 ? 'wird' : 'werden'} entfernt; ${weg.length === 1 ? 'ihre' : 'deren'} Klassen kommen in ${esc(S.gruppen[n - 1].name)}. Danach ggf. neu verteilen.</p>`, 'Entfernen'))) return UI.render();
+  }
+  if (S.gruppen.some(g => g.klassenIds.length) && !(await strukturAenderungOk('Die Änderung der Gruppenanzahl'))) return UI.render();
   while (S.gruppen.length > n) { const weg = S.gruppen.pop(); S.gruppen[S.gruppen.length - 1].klassenIds.push(...weg.klassenIds); }
   while (S.gruppen.length < n) {
-    const frei = ['gA', 'gB', 'gC', 'gD'].find(id => !S.gruppen.some(g => g.id === id));
-    S.gruppen.push({ id: frei, name: 'Gruppe ' + 'ABCD'[S.gruppen.length], klassenIds: [] });
+    const frei = GRUPPEN_IDS.find(id => !S.gruppen.some(g => g.id === id)) || uid('g');
+    S.gruppen.push({ id: frei, name: 'Gruppe ' + 'ABCDEFGH'[S.gruppen.length], klassenIds: [] });
   }
   geaendert();
-};
+}
+AKTION['gruppen-anzahl'] = el => gruppenAnzahlSetzen(+el.dataset.n);
+AENDERUNG['gruppen-anzahl'] = el => gruppenAnzahlSetzen(ganz(el.value, S.gruppen.length));
 AKTION['gruppen-verteilen'] = async () => {
   if (UI.verteilung === 'buchstabe' && S.gruppen.length > 1 && !klassenMitBuchstabe().length) {
     UI.toast(`Keine Klasse endet auf „${S.einstellungen.verteilBuchstabe || ''}“ – bitte Buchstaben prüfen.`, 'fehler', 5000); return;
@@ -2806,7 +2835,7 @@ UI.RENDER.tabelle = () => {
           <button class="btn btn-klein" data-a="los" data-cluster="${ids.join(',')}" data-pos="0" data-r="0">Reihenfolge so festlegen</button>`
         : 'Das Kriterium „Manuelle Festlegung“ ist ausgeschaltet (⚙ Punkteschema & Daten).'}</div>`).join('')
       : (t.spieleGewertet ? `<p class="klein">Noch ${t.spieleGesamt - t.spieleGewertet} Spiele offen – Gleichstände werden erst nach dem letzten Spiel markiert.</p>` : '');
-    return `<div class="karte gruppe-karte ${['', 'gB', 'gC'][gruppeIdx(g.id)] || ''}"><div class="zeile"><h2 style="margin:0">${esc(g.name)}</h2><span class="trenner"></span>
+    return `<div class="karte gruppe-karte ${GRUPPEN_IDS[gruppeIdx(g.id)] || ''}"><div class="zeile"><h2 style="margin:0">${esc(g.name)}</h2><span class="trenner"></span>
         <span class="klein">${t.spieleGewertet} von ${t.spieleGesamt} Spielen gewertet</span>
         ${losGesetzt ? `<button class="btn btn-klein" data-a="los-reset" data-gruppe="${g.id}">Manuelle Festlegung zurücksetzen</button>` : ''}</div>
       ${tabelleVollHTML(t)}${gleich}</div>`;
@@ -2849,7 +2878,7 @@ UI.RENDER.playoffs = () => {
     <p class="klein">${pg.length === 2 ? `Paarungen: 1. ${esc(pg[0].name)} gegen 1. ${esc(pg[1].name)}, 2. gegen 2. usw. Der Sieger erhält den besseren Platz – der Sieger des ersten Spiels ist Turniersieger.` : 'Bei einer Gruppe: 1. gegen 2., 3. gegen 4. usw.'}
       ${andere.length ? `${andere.map(g => esc(g.name)).join(', ')}: keine Platzierungsspiele, Platzierung nach Vorrundenpunkten; dafür ein Sonderspiel (z. B. Allstars) mit frei wählbaren Namen.` : ''}
       Klassen ohne Gegenplatz erhalten ein Zusatzspiel mit frei wählbarem Gegner (ohne Einfluss auf die Platzierung). Je Spiel eine frei wählbare Sportart – änderbar, solange kein Ergebnis eingetragen ist.</p></div>`;
-  if (!aktiv) return html + '<div class="hinweis">Ohne Platzierungsspiele ergibt sich die Endplatzierung direkt aus der Vorrunden-Tabelle.</div>';
+  if (!aktiv) return html + '<div class="hinweis">Die Platzierungsrunde ist gestrichen. Die Endplatzierung ergibt sich direkt aus der Vorrunden-Tabelle (bei mehreren Gruppen je Gruppe). Wieder einschalten: Häkchen oben oder in Schritt 1.</div>';
   const P = S.playoff, spiele = Playoff.reihenfolge(playoffSpiele());
   const vr = vorrundenSpiele(), offen = vr.filter(sp => !hatErgebnis(sp)).length;
   const gleich = pg.some(g => Tabelle.berechne(g).gleichstaende.length);
