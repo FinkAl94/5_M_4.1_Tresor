@@ -400,7 +400,9 @@ function neuerStand() {
       startzeit: '', spieldauer: 10, pauseMin: 10, finaleZuletzt: false, sportWahl: {},
       paarGruppen: ['gA', 'gB'],                   // Platzierungsspiele zwischen diesen Gruppen
       vorPauseMin: 30, vorPauseText: 'Treffen in Halle 3', nachText: 'Siegerehrung',
-      sonderAngelegt: false
+      sonderAngelegt: false,
+      ausgesetzt: {},                              // ausgesetzte Spiele: {'paar:2': true, 'einzeln:9': true, 'sonder:<id>': true}
+      ohneSpiel: 'punkte'                          // Platzierung ausgesetzter Paarungen: 'punkte' (Vorrundenpunkte) oder 'geteilt'
     },
     parcours: { aktiv: true, proRunde: 2 },        // Ballparcours: Klassen gleichzeitig je Runde
     spiele: [],     // [{id, phase:'vorrunde'|'playoff', art:'parcours' (Station, nur klasseA, punkte, zeit), gruppeId, sportart, klasseA, klasseB, hallenId, slot, toreA, toreB, ...}]
@@ -435,6 +437,7 @@ function migriere(d) {
   r.einstellungen.tieBreak = tb;
   r.playoff = Object.assign({}, b.playoff, d.playoff);
   r.playoff.sportWahl = r.playoff.sportWahl || {};
+  r.playoff.ausgesetzt = r.playoff.ausgesetzt || {};
   r.urkunden = Object.assign({}, b.urkunden, d.urkunden);
   if (!Array.isArray(r.urkunden.felder)) r.urkunden.felder = standardFelder(r.urkunden.ausrichtung);
   r.meta = Object.assign({}, b.meta, d.meta);
@@ -1288,6 +1291,23 @@ const Planer = {
    ========================================================================== */
 const istPaar = g => !g.art || g.art === 'paar';
 const Playoff = {
+  /** Fester Schlüssel eines Spiels (bleibt beim Übernehmen der Paarungen gleich). */
+  schluessel(g) { return istPaar(g) ? 'paar:' + g.nr : g.art === 'einzeln' ? 'einzeln:' + g.platzVon : 'sonder:' + g.id; },
+  istAus(g) { return !!(S.playoff.ausgesetzt || {})[this.schluessel(g)]; },
+  aktive() { return playoffSpiele().filter(g => !this.istAus(g)); },
+  /** Spiel aussetzen bzw. wieder aufnehmen. Spiele mit Ergebnis können nicht ausgesetzt werden. */
+  setzeAus(g, aus) {
+    if (aus && hatErgebnis(g)) return false;
+    const m = S.playoff.ausgesetzt || (S.playoff.ausgesetzt = {});
+    if (aus) { m[this.schluessel(g)] = true; g.slot = null; g.hallenId = null; } else delete m[this.schluessel(g)];
+    return true;
+  },
+  /** Leere Runden in den Platzierungsspielen entfernen. */
+  kompakt() {
+    const belegt = [...new Set(playoffSpiele().filter(g => g.slot !== null && g.slot !== undefined).map(g => g.slot))].sort((a, b) => a - b);
+    const neu = new Map(belegt.map((s, i) => [s, i]));
+    playoffSpiele().forEach(g => { if (g.slot !== null && g.slot !== undefined) g.slot = neu.get(g.slot); });
+  },
   /** Die beiden Gruppen, deren Klassen Platzierungsspiele bestreiten (bei 1 Gruppe: diese). */
   paarGruppen() {
     if (S.gruppen.length === 1) return [S.gruppen[0]];
@@ -1402,7 +1422,8 @@ const Playoff = {
   },
   /** Verteilt Spiele ohne festen Platz frühestmöglich auf passende Hallen; optional Finale allein am Schluss. */
   planen(alleNeu) {
-    const spiele = playoffSpiele();
+    playoffSpiele().forEach(g => { if (this.istAus(g)) { g.slot = null; g.hallenId = null; } });
+    const spiele = this.aktive();
     const finaleZuletzt = S.playoff.finaleZuletzt && spiele.length > 1;
     const istFinale = g => istPaar(g) && g.nr === 1;
     const passt = g => { const h = halleVon(g.hallenId); return h && h.sportart === g.sportart && g.slot !== null && g.slot !== undefined; };
@@ -1424,7 +1445,7 @@ const Playoff = {
     frei.forEach(g => { if (g !== finale) setze(g, 0); });
     if (finale) setze(finale, Math.max(-1, ...spiele.filter(g => g !== finale && g.slot !== null && g.slot !== undefined).map(g => g.slot)) + 1);
   },
-  ohneHalle() { return playoffSpiele().filter(g => !S.hallen.some(h => h.sportart === g.sportart)); }
+  ohneHalle() { return this.aktive().filter(g => !S.hallen.some(h => h.sportart === g.sportart)); }
 };
 
 const Endstand = {
@@ -1435,7 +1456,15 @@ const Endstand = {
     if (S.einstellungen.playoffsAktiv && paare.length) {
       const soll = Playoff.soll(), liste = [];
       let alle = true;
+      const pkt = new Map();
+      Playoff.paarGruppen().forEach(gr => Tabelle.berechne(gr).zeilen.forEach(z => pkt.set(z.klasseId, z.punkte)));
       paare.slice().sort((a, b) => a.nr - b.nr).forEach(g => {
+        if (Playoff.istAus(g)) {   // ohne Spiel: nach Vorrundenpunkten (Gleichstand = geteilter Platz) oder immer geteilt
+          const pa = pkt.get(g.klasseA) ?? 0, pb = pkt.get(g.klasseB) ?? 0;
+          if (S.playoff.ohneSpiel === 'geteilt' || pa === pb) liste.push({ klasseId: g.klasseA, platz: g.platzVon, ohneSpiel: true }, { klasseId: g.klasseB, platz: g.platzVon, ohneSpiel: true });
+          else { const [b, s2] = pa > pb ? [g.klasseA, g.klasseB] : [g.klasseB, g.klasseA]; liste.push({ klasseId: b, platz: g.platzVon, ohneSpiel: true }, { klasseId: s2, platz: g.platzVon + 1, ohneSpiel: true }); }
+          return;
+        }
         const s = Playoff.sieger(g);
         if (s) liste.push({ klasseId: s, platz: g.platzVon }, { klasseId: s === g.klasseA ? g.klasseB : g.klasseA, platz: g.platzVon + 1 });
         else { alle = false; liste.push({ klasseId: g.klasseA, platz: g.platzVon, offen: true }, { klasseId: g.klasseB, platz: g.platzVon, offen: true }); }
@@ -2451,7 +2480,7 @@ function rasterHTML(phase) {
     html += '</tr>';
   }
   html += '</tbody></table></div>';
-  const ohne = spiele.filter(sp => sp.slot === null || sp.slot === undefined || !halleVon(sp.hallenId));
+  const ohne = spiele.filter(sp => (sp.slot === null || sp.slot === undefined || !halleVon(sp.hallenId)) && !(sp.phase === 'playoff' && Playoff.istAus(sp)));
   if (ohne.length) html += `<div class="hinweis warn"><b>Nicht eingeplante Spiele</b> (antippen und dann ein freies Feld wählen):<div class="zeile" style="margin-top:.4rem">${ohne.map(x => `<div style="min-width:160px;display:flex">${spielKarte(x, konf)}</div>`).join('')}</div></div>`;
   return html;
 }
@@ -2715,7 +2744,7 @@ function endstandHTML() {
   if (!vr.some(hatErgebnis) && es.quelle === 'vorrunde') return '<p class="klein">Noch keine Ergebnisse.</p>';
   return `<p class="klein">${es.quelle === 'playoff' ? 'Aus den Platzierungsspielen.' : 'Aus der Vorrunden-Tabelle.'} ${es.vollstaendig ? '<b style="color:var(--gruen)">Endgültig.</b>' : '<b style="color:var(--gelb)">Vorläufig</b> (noch offene Spiele oder unentschiedene Gleichstände).'}</p>
     <table class="tab-std"><thead><tr><th>Platz</th><th>Klasse</th><th>Gruppe</th></tr></thead><tbody>
-    ${es.liste.map(e => `<tr><td><b>${esc(e.platzText)}</b></td><td><b>${esc(klasseName(e.klasseId))}</b></td><td>${esc(e.gruppe || '')}</td></tr>`).join('')}</tbody></table>`;
+    ${es.liste.map(e => `<tr><td><b>${esc(e.platzText)}</b>${e.ohneSpiel ? ' <small>(ohne Spiel)</small>' : ''}</td><td><b>${esc(klasseName(e.klasseId))}</b></td><td>${esc(e.gruppe || '')}</td></tr>`).join('')}</tbody></table>`;
 }
 
 /* ---------------- Schritt 7: Platzierungsspiele ---------------- */
@@ -2758,6 +2787,16 @@ UI.RENDER.playoffs = () => {
     <p class="klein">${nv ? `Vorrunde endet um ${minZuZeit(Planer.zeiten(nv).slots[nv - 1].ende)} Uhr → automatischer Beginn der Platzierungsspiele: ${minZuZeit(Planer.standardPlayoffStart())} Uhr.` : 'Beginn automatisch nach der Vorrunde plus Pause.'}
       Pausentext und Abschluss erscheinen in den Plänen und im PDF „Gesamtablauf“.</p>
     ${hinweise.length ? `<div class="hinweis warn"><ul>${hinweise.map(h => `<li>${h}</li>`).join('')}</ul></div>` : ''}
+    ${spiele.some(istPaar) ? (() => {
+      const paare = spiele.filter(istPaar), anzAktiv = paare.filter(g => !Playoff.istAus(g)).length;
+      const muster = paare.every(g => Playoff.istAus(g) === (g.nr > anzAktiv)) && spiele.filter(g => g.art === 'einzeln').every(g => Playoff.istAus(g) === (anzAktiv < paare.length));
+      const wert = !muster ? 'individuell' : anzAktiv === paare.length ? 'alle' : String(anzAktiv);
+      const opt = [['alle', 'alle Platzierungsspiele'], ...paare.slice(0, -1).map(g => [String(g.nr), g.nr === 1 ? `nur ${Playoff.kurzLabel(g.labelA).replace(/ Gr\. .*/, '')} gegen ${Playoff.kurzLabel(g.labelB).replace(/ Gr\. .*/, '')} (Finale)` : `bis ${Playoff.bezeichnung(g)}`]), ...(muster ? [] : [['individuell', 'individuell (siehe Häkchen unten)']])];
+      return `<div class="zeile">
+        <label class="feld"><span>Gespielt werden</span><select data-c="po-umfang">${optionen(opt, wert)}</select></label>
+        <label class="feld" style="flex:1 1 260px"><span>Platzierung bei ausgesetzten Platzierungsspielen</span><select data-c="po-ohnespiel" class="breit">${optionen([['punkte', 'nach Vorrundenpunkten (mehr Punkte = besserer Platz)'], ['geteilt', 'geteilter Platz (z. B. beide 3. Platz)']], S.playoff.ohneSpiel || 'punkte')}</select></label>
+      </div><p class="klein">Einzelne Spiele lassen sich unten über das Häkchen „spielen“ aussetzen oder wieder aufnehmen. Ausgesetzte Spiele erscheinen nicht in Plänen und PDFs. Bei „Gleichstand“ in den Vorrundenpunkten gibt es einen geteilten Platz.</p>`;
+    })() : ''}
     <div class="zeile">
       <button class="btn btn-primaer" data-a="po-uebernehmen" ${!vr.length ? 'disabled' : ''}>${spiele.length ? 'Paarungen aus Tabelle übernehmen' : 'Platzierungsspiele anlegen'}</button>
       ${spiele.length ? '<button class="btn" data-a="po-planen">Hallen und Zeiten neu verteilen</button>' : ''}
@@ -2777,8 +2816,10 @@ UI.RENDER.playoffs = () => {
     <div class="tab-scroll"><table class="tab-std"><thead><tr><th>Spiel</th><th>Paarung</th><th>Sportart</th><th>Halle</th><th>Runde / Beginn</th><th>Ergebnis</th></tr></thead><tbody>
     ${spiele.map(g => {
       const erg = hatErgebnis(g), hallen = S.hallen.filter(h => h.sportart === g.sportart);
-      const unent = erg && g.toreA === g.toreB && istPaar(g);
-      return `<tr data-zeile="${g.id}"><td><b>${esc(Playoff.bezeichnung(g))}</b>${g.art === 'sonder' ? `<br><button class="btn btn-klein btn-gefahr" data-a="po-sonder-weg" data-id="${g.id}" style="margin-top:.3rem">Entfernen</button>` : ''}</td>
+      const unent = erg && g.toreA === g.toreB && istPaar(g), aus = Playoff.istAus(g);
+      if (aus) return `<tr data-zeile="${g.id}" style="opacity:.55"><td><label class="check"><input type="checkbox" data-c="po-spielen" data-id="${g.id}"> spielen</label><br><b>${esc(Playoff.bezeichnung(g))}</b></td>
+        <td style="min-width:190px">${paarung(g)}</td><td colspan="4"><i>ausgesetzt${istPaar(g) ? ` – Platzierung ${S.playoff.ohneSpiel === 'geteilt' ? 'geteilt' : 'nach Vorrundenpunkten'}` : ''}</i></td></tr>`;
+      return `<tr data-zeile="${g.id}"><td><label class="check"><input type="checkbox" data-c="po-spielen" data-id="${g.id}" checked ${erg ? 'disabled title="Ergebnis eingetragen – kann nicht ausgesetzt werden"' : ''}> spielen</label><br><b>${esc(Playoff.bezeichnung(g))}</b>${g.art === 'sonder' ? `<br><button class="btn btn-klein btn-gefahr" data-a="po-sonder-weg" data-id="${g.id}" style="margin-top:.3rem">Entfernen</button>` : ''}</td>
         <td style="min-width:190px">${paarung(g)}</td>
         <td><select data-c="po-sport" data-id="${g.id}" ${erg ? 'disabled title="Ergebnis eingetragen – Sportart fest"' : ''}>${optionen(spielSportarten().map(s => [s.id, s.name]), g.sportart)}</select></td>
         <td><select data-c="po-halle" data-id="${g.id}">${hallen.length ? optionen(hallen.map(h => [h.id, h.name]), g.hallenId) : '<option>– keine Halle –</option>'}</select></td>
@@ -2807,6 +2848,23 @@ function poZeileAktualisieren(g) {
   const sel = $(`[data-c="po-sport"][data-id="${g.id}"]`);
   if (sel) sel.disabled = hatErgebnis(g);
 }
+AENDERUNG['po-spielen'] = el => {
+  const g = S.spiele.find(x => x.id === el.dataset.id);
+  if (!Playoff.setzeAus(g, !el.checked)) { el.checked = true; UI.toast('Für dieses Spiel ist bereits ein Ergebnis eingetragen.', 'fehler'); return; }
+  Playoff.planen(false); Playoff.kompakt(); geaendert();
+};
+AENDERUNG['po-umfang'] = el => {
+  if (el.value === 'individuell') return;
+  const n = el.value === 'alle' ? Infinity : ganz(el.value, 1), gesperrt = [];
+  playoffSpiele().forEach(g => {
+    if (g.art === 'sonder') return;
+    const aus = istPaar(g) ? g.nr > n : n !== Infinity;
+    if (!Playoff.setzeAus(g, aus)) gesperrt.push(Playoff.bezeichnung(g));
+  });
+  Playoff.planen(false); Playoff.kompakt(); geaendert();
+  if (gesperrt.length) UI.toast('Nicht ausgesetzt (Ergebnis vorhanden): ' + gesperrt.join(', '), 'fehler', 6000);
+};
+AENDERUNG['po-ohnespiel'] = el => { S.playoff.ohneSpiel = el.value; geaendert(); };
 AENDERUNG['po-aktiv'] = el => { S.einstellungen.playoffsAktiv = el.checked; geaendert(); };
 AENDERUNG['po-start'] = el => { S.playoff.startzeit = zeitZuMin(el.value) !== null ? el.value : ''; geaendert(); };
 AENDERUNG['po-dauer'] = el => { S.playoff.spieldauer = Math.max(1, zahl(el.value, 10)); geaendert(); };
