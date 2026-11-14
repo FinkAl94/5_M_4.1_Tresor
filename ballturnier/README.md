@@ -3,23 +3,24 @@
 `ballturnier.html` ist eine einzelne Datei, die komplett offline läuft (Doppelklick → öffnet im Browser). Es gibt keinen Server, kein Login und keine Internetverbindung. Alle Daten bleiben auf dem Gerät. Empfohlen: aktueller Edge, Chrome oder Firefox, für die Turnierleitung am besten am Laptop.
 
 **Voreinstellungen wie beim Turnier 2025:**
-- Felder T1–T2 Fußball, T3–T4 Handball, T5–T6 Basketball.
+- Felder T1–T2 Fußball, T3–T4 Handball, T5–T6 Basketball, Halle 7 Ballparcours.
 - Beginn 8:40, 10 Min. Spiel und 10 Min. Wechsel.
-- 3 Gruppen, a-Klassen in Gruppe C; jede Klasse spielt jede Sportart 2×.
-- 1 Punkt pro Tor bzw. Korb.
+- 3 Gruppen, a-Klassen in Gruppe C; jede Klasse spielt jede Ballsportart 2× und geht einmal in den Ballparcours (2 Klassen je Runde).
+- 1 Punkt pro Tor bzw. Korb; Ballparcours-Punkte werden direkt eingetragen und zählen mit.
 - Platzierungsspiele nach „Treffen in Halle 3“, danach Siegerehrung.
 
 Alles lässt sich je Turnier ändern.
 
 ## Ablauf (Reiter oben)
 
-1. **Rahmendaten**: Turniername und Datum. Turniermodus: „feste Anzahl Spiele je Sportart“ (wie 2025) oder „jeder gegen jeden in jeder Sportart“. Dazu Hallen/Felder mit Sportart, Zeiten und Blockpausen. Der Überblick zeigt, ob alles ins Zeitfenster passt.
+1. **Rahmendaten**: Turniername und Datum. Turniermodus: „feste Anzahl Spiele je Sportart“ (wie 2025) oder „jeder gegen jeden in jeder Sportart“. Ballparcours ein/aus und wie viele Klassen gleichzeitig hineingehen. Dazu Hallen/Felder mit Sportart, Zeiten und Blockpausen. Der Überblick zeigt, ob alles ins Zeitfenster passt.
 2. **Klassen**: Mehrere auf einmal eingeben, z. B. `8Ga 8Gb 8Ra` (oder eine Spalte aus Excel einfügen), dann Enter.
 3. **Gruppen**: 1 bis 3 Gruppen anlegen und „Automatisch verteilen“. Voreingestellt wie 2025: Alle Klassen, die auf **a** enden (8Ga, 8Ra, 8Ma …), kommen in **Gruppe C**, die übrigen zufällig und möglichst gleich groß in A und B. Buchstabe und Zielgruppe sind einstellbar. Anpassen geht per Ziehen mit der Maus oder über das Auswahlfeld an der Klasse.
 4. **Spielplan**: „Spielplan erzeugen“ berechnet die Vorrunde automatisch. Gegner kommen aus der eigenen Gruppe; bei ungerader Gruppengröße spielt je Runde eine Klasse gegen eine andere Gruppe, wie 2025 bei B und C. Ziele: keine Doppelbelegung, möglichst wenige Runden, wechselnde Sportarten und Gegner.
    - Verschieben: Spiel antippen, dann ein freies Feld oder ein anderes Spiel (Tausch) antippen.
-   - PDF: Gesamtplan, **Gesamtablauf** (Vorrunde, Treffen, Platzierungsspiele, Siegerehrung auf einer Seite), Pläne je Feld und Laufzettel je Klasse.
-5. **Ergebnisse**: Tore bzw. Körbe je Spiel eintragen, Enter springt ins nächste Feld. Rechts steht die Tabelle live.
+   - Der Ballparcours ist eine eigene Station (Halle 7): Jede Klasse kommt genau einmal dran und hat in dieser Runde kein Spiel. Mit 12 Klassen und 2 Klassen je Runde sind es 7 Runden (8:40–10:50).
+   - PDF: Gesamtplan, **Gesamtablauf** (Vorrunde, Treffen, Platzierungsspiele, Siegerehrung auf einer Seite), Pläne je Feld (für Halle 7 mit Spalten für Zeit und Punkte) und Laufzettel je Klasse.
+5. **Ergebnisse**: Tore bzw. Körbe je Spiel eintragen; beim Ballparcours die Punkte (Zeit optional). Enter springt ins nächste Feld. Rechts steht die Tabelle live.
 6. **Tabelle**: Rangliste je Gruppe nach Punkten. Gruppenübergreifende Spiele zählen für die eigene Klasse. Bei Gleichstand lässt sich die Reihenfolge manuell festlegen (Los).
 7. **Platzierungsspiele**: 1. A gegen 1. B, 2. A gegen 2. B usw.; der Sieger des ersten Spiels ist Turniersieger.
    - Gruppe C bekommt ein Sonderspiel mit frei wählbaren Namen (voreingestellt „Allstars Gruppe C – Allstars“). Ihre Platzierung ergibt sich aus den Vorrundenpunkten.
