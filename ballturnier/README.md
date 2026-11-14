@@ -22,7 +22,8 @@ Alles lässt sich je Turnier ändern.
    - PDF: Gesamtplan, **Gesamtablauf** (Vorrunde, Treffen, Platzierungsspiele, Siegerehrung auf einer Seite), Pläne je Feld (für Halle 7 mit Spalten für Zeit und Punkte) und Laufzettel je Klasse.
 5. **Ergebnisse**: Tore bzw. Körbe je Spiel eintragen; beim Ballparcours die Punkte (Zeit optional). Enter springt ins nächste Feld. Rechts steht die Tabelle live.
 6. **Tabelle**: Rangliste je Gruppe nach Punkten. Gruppenübergreifende Spiele zählen für die eigene Klasse. Bei Gleichstand lässt sich die Reihenfolge manuell festlegen (Los).
-7. **Platzierungsspiele**: 1. A gegen 1. B, 2. A gegen 2. B usw.; der Sieger des ersten Spiels ist Turniersieger.
+7. **Platzierungsspiele**: Gruppenpaare frei einstellbar (z. B. A–B und C–D); je Paar 1. gegen 1., 2. gegen 2. usw.
+   - Weitere Runden (bei 2, 4 oder 8 Gruppenpaaren) je Rang wählbar: Sieger gegen Sieger, Verlierer gegen Verlierer – bei A–B und C–D z. B. Finale (Sieger 1.A–1.B gegen Sieger 1.C–1.D) und Spiel um Platz 3. Voreingestellt nur für die Gruppenersten; ohne weitere Runde entscheiden die Vorrundenpunkte.
    - Gruppe C bekommt ein Sonderspiel mit frei wählbaren Namen (voreingestellt „Allstars Gruppe C – Allstars“). Ihre Platzierung ergibt sich aus den Vorrundenpunkten.
    - Klassen ohne Gegenplatz (z. B. 5. Gruppe B) bekommen ein Zusatzspiel mit frei wählbarem Gegner, ohne Einfluss auf die Platzierung.
    - Sportart und Halle sind je Spiel frei und unabhängig voneinander wählbar; die Vorrunden-Sportart einer Halle steht nur als Hinweis dabei. Bei Unentschieden wird der Sieger mit Vermerk festgelegt.

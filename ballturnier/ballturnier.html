@@ -159,6 +159,7 @@ tr.gleichstand td { background: var(--gelb-100); }
 .spiel.gX { border-left-color: var(--gX); border-left-style: dashed; }
 .spiel.po { border-left-color: var(--blau-900); }
 .spiel .paar { font-weight: 700; white-space: nowrap; }
+.spiel.po .paar { white-space: normal; max-width: 220px; }
 .spiel .info { font-size: .78rem; color: var(--grau-500); display: flex; justify-content: space-between; gap: .4rem; }
 .spiel .erg { font-weight: 700; color: var(--gruen); }
 .spiel.gewaehlt { outline: 3px solid var(--blau-500); background: var(--blau-50); }
@@ -420,7 +421,8 @@ function neuerStand() {
     },
     playoff: {
       startzeit: '', spieldauer: 10, pauseMin: 10, finaleZuletzt: false, sportWahl: {},
-      paarGruppen: ['gA', 'gB'],                   // Platzierungsspiele zwischen diesen Gruppen
+      paare: [['gA', 'gB']],                       // Gruppenpaare der ersten Platzierungsrunde, z. B. [['gA','gB'], ['gC','gD']]
+      folgeRunden: {},                             // je Rang Anzahl Folgerunden (Standard: Rang 1 alle, übrige keine)
       vorPauseMin: 30, vorPauseText: 'Treffen in Halle 3', nachText: 'Siegerehrung',
       sonderAngelegt: false,
       ausgesetzt: {},                              // ausgesetzte Spiele: {'paar:2': true, 'einzeln:9': true, 'sonder:<id>': true}
@@ -470,12 +472,25 @@ function migriere(d) {
   r.playoff = Object.assign({}, b.playoff, d.playoff);
   r.playoff.sportWahl = r.playoff.sportWahl || {};
   r.playoff.ausgesetzt = r.playoff.ausgesetzt || {};
+  r.playoff.folgeRunden = r.playoff.folgeRunden || {};
+  // frühere Fassung: ein Gruppenpaar (paarGruppen), Spiele/Schlüssel nach Nummer
+  if (!Array.isArray(d.playoff?.paare)) {
+    r.playoff.paare = [d.playoff?.paarGruppen || ['gA', 'gB']];
+    const umbenennen = m => Object.fromEntries(Object.entries(m || {}).filter(([k]) => !k.startsWith('einzeln:')).map(([k, v]) => [/^paar:\d+$/.test(k) ? 'paar:0:' + k.slice(5) : /^\d+$/.test(k) ? 'paar:0:' + k : k, v]));
+    r.playoff.ausgesetzt = umbenennen(r.playoff.ausgesetzt);
+    r.playoff.sportWahl = umbenennen(r.playoff.sportWahl);
+  }
+  delete r.playoff.paarGruppen;
   r.urkunden = Object.assign({}, b.urkunden, d.urkunden);
   if (!Array.isArray(r.urkunden.felder)) r.urkunden.felder = standardFelder(r.urkunden.ausrichtung);
   r.meta = Object.assign({}, b.meta, d.meta);
   r.losWerte = d.losWerte || {};
   r.gruppen = r.gruppen.slice(0, MAX_GRUPPEN);
   if (!r.gruppen.length) r.gruppen = [b.gruppen[0]];
+  r.spiele.forEach(sp => {
+    if (sp.phase === 'playoff' && (!sp.art || sp.art === 'paar') && sp.rang === undefined) { sp.art = 'paar'; sp.paarIdx = 0; sp.rang = sp.nr; }
+    if (sp.phase === 'playoff' && sp.art === 'einzeln' && sp.rang === undefined) { sp.paarIdx = 0; sp.rang = 0; }
+  });
   r.spiele.forEach(sp => { sp.toreA = zahlOderNull(sp.toreA); sp.toreB = zahlOderNull(sp.toreB); if (sp.art === 'parcours') sp.punkte = zahlOderNull(sp.punkte); });
   r.version = APP_VERSION;
   return r;
@@ -505,6 +520,7 @@ const teamName = (sp, seite) => {
   const k = sp['klasse' + seite]; if (k) return klasseName(k);
   const t = sp['text' + seite]; if (t) return t;
   if (istParcours(sp)) return seite === 'B' ? '' : '?';
+  if (sp.art === 'folge') return sp['label' + seite] || '?';   // Teilnehmer steht noch nicht fest (z. B. „Sieger 1. Gr. A–1. Gr. B“)
   return sp.art === 'einzeln' && seite === 'B' ? 'Gegner offen' : '?';
 };
 /* Ballparcours: Station ohne Gegner (Spiel-Objekt mit art 'parcours', nur klasseA, Ergebnis = punkte) */
@@ -1332,10 +1348,26 @@ const Planer = {
      - Sonderspiele mit freien Namen (z. B. „Allstars Gruppe C – Allstars“) für Gruppen ohne Platzierungsspiele.
    Zusatz- und Sonderspiele ändern die Platzierung nicht.
    ========================================================================== */
+/* Platzierungsspiele:
+ *   Runde 1 („paar“):   je Gruppenpaar Rang gegen Rang (1. A – 1. B, 2. A – 2. B …); bei 1 Gruppe 1.–2., 3.–4. …
+ *   Folgerunden („folge“): bei 2 bzw. 4 Gruppenpaaren je Rang wählbar – Sieger gegen Sieger, Verlierer gegen Verlierer
+ *                       (2 Paare: Finale + Spiel um Platz 3; 4 Paare: bis zu 2 weitere Runden)
+ *   Zusatzspiel („einzeln“): Klasse ohne Gegenplatz, Gegner frei wählbar, ohne Einfluss auf die Platzierung
+ *   Sonderspiel („sonder“): freie Namen (z. B. Allstars), ohne Einfluss auf die Platzierung
+ * Ausgesetzte/nicht gespielte Runden: Vorrundenpunkte (oder geteilter Platz).
+ */
 const istPaar = g => !g.art || g.art === 'paar';
+const istFolge = g => g.art === 'folge';
+const istPlatzierung = g => istPaar(g) || istFolge(g);
 const Playoff = {
   /** Fester Schlüssel eines Spiels (bleibt beim Übernehmen der Paarungen gleich). */
-  schluessel(g) { return istPaar(g) ? 'paar:' + g.nr : g.art === 'einzeln' ? 'einzeln:' + g.platzVon : 'sonder:' + g.id; },
+  schluessel(g) {
+    if (istPaar(g)) return `paar:${g.paarIdx ?? 0}:${g.rang ?? g.nr}`;
+    if (istFolge(g)) return `folge:${g.rang}:${g.runde}:${g.prefix}:${g.pos}`;
+    if (g.art === 'einzeln') return `einzeln:${g.paarIdx ?? 0}:${g.rang}`;
+    return 'sonder:' + g.id;
+  },
+  finde(key) { return playoffSpiele().find(g => this.schluessel(g) === key); },
   istAus(g) { return !!(S.playoff.ausgesetzt || {})[this.schluessel(g)]; },
   aktive() { return playoffSpiele().filter(g => !this.istAus(g)); },
   /** Spiel aussetzen bzw. wieder aufnehmen. Spiele mit Ergebnis können nicht ausgesetzt werden. */
@@ -1351,174 +1383,299 @@ const Playoff = {
     const neu = new Map(belegt.map((s, i) => [s, i]));
     playoffSpiele().forEach(g => { if (g.slot !== null && g.slot !== undefined) g.slot = neu.get(g.slot); });
   },
-  /** Die beiden Gruppen, deren Klassen Platzierungsspiele bestreiten (bei 1 Gruppe: diese). */
-  paarGruppen() {
-    if (S.gruppen.length === 1) return [S.gruppen[0]];
-    const ids = S.playoff.paarGruppen || [];
-    let a = S.gruppen.find(g => g.id === ids[0]), b = S.gruppen.find(g => g.id === ids[1]);
-    if (!a || !b || a === b) { a = S.gruppen[0]; b = S.gruppen[1]; }
-    return [a, b];
+
+  /* ---------- Gruppenpaare und Folgerunden ---------- */
+  /** Gruppenpaare der ersten Runde, z. B. [[A, B], [C, D]]; bei 1 Gruppe [[A, A]]. Jede Gruppe höchstens einmal. */
+  paare() {
+    if (S.gruppen.length === 1) return [[S.gruppen[0], S.gruppen[0]]];
+    const g = id => S.gruppen.find(x => x.id === id), benutzt = new Set();
+    const liste = (S.playoff.paare || []).map(p => [g(p[0]), g(p[1])])
+      .filter(p => p[0] && p[1] && p[0] !== p[1] && !benutzt.has(p[0]) && !benutzt.has(p[1]) && benutzt.add(p[0]) && benutzt.add(p[1]));
+    return liste.length ? liste : [[S.gruppen[0], S.gruppen[1]]];
   },
+  einGruppenModus() { return S.gruppen.length === 1; },
+  anzahlPaare() { return this.paare().length; },
+  /** Alle Gruppen, die an Platzierungsspielen teilnehmen. */
+  paarGruppen() { return [...new Set(this.paare().flat())]; },
   /** Gruppen ohne Platzierungsspiele (z. B. Gruppe C 2025). */
-  andereGruppen() { const p = this.paarGruppen(); return S.gruppen.filter(g => !p.includes(g) && g.klassenIds.length); },
-  /** Soll-Paarungen aus den aktuellen Tabellen. */
+  andereGruppen() { const p = new Set(this.paarGruppen()); return S.gruppen.filter(g => !p.has(g) && g.klassenIds.length); },
+  /** Mögliche Folgerunden: 2 Paare → 1, 4 Paare → 2, 8 Paare → 3; sonst keine. */
+  maxFolgeRunden() { const P = this.anzahlPaare(); return !this.einGruppenModus() && P > 1 && (P & (P - 1)) === 0 ? Math.log2(P) : 0; },
+  /** Eingestellte Folgerunden für einen Rang (Standard: Rang 1 alle, übrige keine). */
+  folgeRunden(rang) {
+    const m = this.maxFolgeRunden(), w = (S.playoff.folgeRunden || {})[rang];
+    return Math.max(0, Math.min(m, w === undefined || w === null ? (rang === 1 ? m : 0) : ganz(w, 0)));
+  },
+  /** Soll-Teilnehmer der ersten Runde aus den aktuellen Tabellen. */
   soll() {
-    const res = { paare: [], einzeln: [] };
-    const pg = this.paarGruppen(), tabs = pg.map(g => Tabelle.berechne(g));
-    let platz = 1, nr = 1;
-    if (pg.length === 2) {
-      const [gA, gB] = pg, [tA, tB] = tabs;
-      const n = Math.max(tA.zeilen.length, tB.zeilen.length);
-      for (let i = 0; i < n; i++) {
-        const a = tA.zeilen[i], b = tB.zeilen[i];
-        if (a && b) { res.paare.push({ nr: nr++, platzVon: platz, labelA: `${i + 1}. ${gA.name}`, labelB: `${i + 1}. ${gB.name}`, klasseA: a.klasseId, klasseB: b.klasseId }); platz += 2; }
-        else { const z = a || b, g = a ? gA : gB; res.einzeln.push({ klasseId: z.klasseId, platz, label: `${i + 1}. ${g.name}` }); platz++; }
+    const res = { erste: [], einzeln: [] };
+    if (this.einGruppenModus()) {
+      const z = Tabelle.berechne(S.gruppen[0]).zeilen;
+      for (let i = 0, r = 1; i < z.length; i += 2, r++) {
+        if (z[i + 1]) res.erste.push({ paarIdx: 0, rang: r, labelA: `${i + 1}. Platz`, labelB: `${i + 2}. Platz`, klasseA: z[i].klasseId, klasseB: z[i + 1].klasseId });
+        else res.einzeln.push({ paarIdx: 0, rang: r, klasseId: z[i].klasseId, label: `${i + 1}. Platz` });
       }
-    } else {
-      const z = tabs[0].zeilen;
-      for (let i = 0; i < z.length; i += 2) {
-        if (z[i + 1]) { res.paare.push({ nr: nr++, platzVon: platz, labelA: `${i + 1}. Platz`, labelB: `${i + 2}. Platz`, klasseA: z[i].klasseId, klasseB: z[i + 1].klasseId }); platz += 2; }
-        else { res.einzeln.push({ klasseId: z[i].klasseId, platz, label: `${i + 1}. Platz` }); platz++; }
-      }
+      return res;
     }
+    this.paare().forEach(([gA, gB], p) => {
+      const tA = Tabelle.berechne(gA).zeilen, tB = Tabelle.berechne(gB).zeilen;
+      for (let i = 0; i < Math.max(tA.length, tB.length); i++) {
+        const a = tA[i], b = tB[i];
+        if (a && b) res.erste.push({ paarIdx: p, rang: i + 1, labelA: `${i + 1}. ${gA.name}`, labelB: `${i + 1}. ${gB.name}`, klasseA: a.klasseId, klasseB: b.klasseId });
+        else { const z = a || b, g = a ? gA : gB; res.einzeln.push({ paarIdx: p, rang: i + 1, klasseId: z.klasseId, label: `${i + 1}. ${g.name}` }); }
+      }
+    });
     return res;
   },
-  bezeichnung(sp) {
-    if (sp.art === 'sonder') return 'Sonderspiel';
-    if (sp.art === 'einzeln') return `Zusatzspiel ${sp.labelA || ''}`.trim();
-    return sp.nr === 1 ? 'Finale (Platz 1/2)' : `Spiel um Platz ${sp.platzVon}/${sp.platzVon + 1}`;
+  /** Spiele der Folgerunden eines Rangs: Sieger gegen Sieger, Verlierer gegen Verlierer (Präfix S/V = Weg dorthin). */
+  folgeStruktur(rang, ersteKeys) {
+    const n = this.folgeRunden(rang), out = [];
+    let ebene = [{ prefix: '', spiele: ersteKeys }];
+    for (let j = 2; j <= n + 1; j++) {
+      const naechste = [];
+      for (const grp of ebene) for (const t of ['S', 'V']) {
+        const prefix = grp.prefix + t, keys = [];
+        for (let i = 0; i + 1 < grp.spiele.length; i += 2) {
+          const pos = i / 2, key = `folge:${rang}:${j}:${prefix}:${pos}`;
+          out.push({ key, rang, runde: j, prefix, pos, quelleA: { key: grp.spiele[i], t }, quelleB: { key: grp.spiele[i + 1], t } });
+          keys.push(key);
+        }
+        naechste.push({ prefix, spiele: keys });
+      }
+      ebene = naechste;
+    }
+    return out;
+  },
+  /** Anzahl Teilnehmer je Rang und erster Platz des Rangs (Platzblöcke: Rang 1 vor Rang 2 …). */
+  bloecke() {
+    const soll = this.soll(), anz = new Map();
+    soll.erste.forEach(e => anz.set(e.rang, (anz.get(e.rang) || 0) + 2));
+    soll.einzeln.forEach(e => anz.set(e.rang, (anz.get(e.rang) || 0) + 1));
+    const start = new Map(); let p = 1;
+    [...anz.keys()].sort((a, b) => a - b).forEach(r => { start.set(r, p); p += anz.get(r); });
+    return { start, anz };
+  },
+  /** Platzbereich, um den ein Spiel geht: [von, bis]. */
+  plaetze(g) {
+    const b = this.bloecke(), s = b.start.get(g.rang) || 1, P = this.einGruppenModus() ? 1 : this.anzahlPaare();
+    if (istPaar(g)) return P === 1 ? [s, s + 1] : [s, s + Math.min(2 * P, b.anz.get(g.rang) || 2 * P) - 1];
+    const groesse = (2 * P) / 2 ** (g.runde - 1), wert = parseInt(g.prefix.replace(/S/g, '0').replace(/V/g, '1'), 2);
+    const von = s + wert * groesse;
+    return [von, von + groesse - 1];
+  },
+  bezeichnung(g) {
+    if (g.art === 'sonder') return 'Sonderspiel';
+    if (g.art === 'einzeln') return `Zusatzspiel ${g.labelA || ''}`.trim();
+    const [a, b] = this.plaetze(g);
+    if (b - a === 1) return a === 1 ? 'Finale (Platz 1/2)' : `Spiel um Platz ${a}/${b}`;
+    return istPaar(g) ? `Runde 1 · Plätze ${a}–${b}` : `Runde ${g.runde} · Plätze ${a}–${b}`;
   },
   kurzLabel(t) { return String(t || '').replace(/Gruppe /g, 'Gr. '); },
-  /** Zweite Zeile für Pläne, z. B. „Finale · 1. Gr. A – 1. Gr. B“. */
-  zusatzText(sp) {
-    if (sp.art === 'sonder') return 'Sonderspiel';
-    if (sp.art === 'einzeln') return `${this.kurzLabel(sp.labelA)} · Zusatzspiel`;
-    return `${sp.nr === 1 ? 'Finale · ' : ''}${this.kurzLabel(sp.labelA)} – ${this.kurzLabel(sp.labelB)}`;
+  /** Zweite Zeile für Pläne, z. B. „Finale · 1. Gr. A – 1. Gr. B“ oder „Finale · Sieger … – Sieger …“. */
+  zusatzText(g) {
+    if (g.art === 'sonder') return 'Sonderspiel';
+    if (g.art === 'einzeln') return `${this.kurzLabel(g.labelA)} · Zusatzspiel`;
+    const bez = this.bezeichnung(g), kopf = bez.startsWith('Finale') ? 'Finale · ' : bez.startsWith('Spiel um') ? bez.replace('Spiel um ', '') + ' · ' : '';
+    return `${kopf}${this.kurzLabel(g.labelA)} – ${this.kurzLabel(g.labelB)}`;
   },
-  sieger(sp) {
-    if (!hatErgebnis(sp)) return null;
-    if (sp.toreA > sp.toreB) return sp.klasseA;
-    if (sp.toreB > sp.toreA) return sp.klasseB;
-    return sp.sieger === sp.klasseA || sp.sieger === sp.klasseB ? sp.sieger : null;
+  sieger(g) {
+    if (!hatErgebnis(g) || !g.klasseA || !g.klasseB) return null;
+    if (g.toreA > g.toreB) return g.klasseA;
+    if (g.toreB > g.toreA) return g.klasseB;
+    return g.sieger === g.klasseA || g.sieger === g.klasseB ? g.sieger : null;
   },
-  /** Reihenfolge für Liste und Planung: Sonderspiele, Platzierungsspiele (Finale zuerst), Zusatzspiele. */
+  /** Vorrundenpunkte aller Klassen der beteiligten Gruppen. */
+  punkte() { const m = new Map(); this.paarGruppen().forEach(gr => Tabelle.berechne(gr).zeilen.forEach(z => m.set(z.klasseId, z.punkte))); return m; },
+  /** Ausgang eines Spiels: [Sieger, Verlierer] oder [null, null]; ausgesetzte Spiele nach Vorrundenpunkten (sofern eingestellt). */
+  ausgang(g, pkt) {
+    if (!g || !g.klasseA || !g.klasseB) return [null, null];
+    if (this.istAus(g)) {
+      if (S.playoff.ohneSpiel === 'geteilt') return [null, null];
+      const pa = pkt.get(g.klasseA) ?? 0, pb = pkt.get(g.klasseB) ?? 0;
+      return pa === pb ? [null, null] : pa > pb ? [g.klasseA, g.klasseB] : [g.klasseB, g.klasseA];
+    }
+    const s = this.sieger(g);
+    return s ? [s, s === g.klasseA ? g.klasseB : g.klasseA] : [null, null];
+  },
+  /** Trägt die Teilnehmer der Folgerunden ein (Sieger/Verlierer der Vorspiele). Spiele mit Ergebnis bleiben unverändert. */
+  aufloesen() {
+    const pkt = this.punkte(), name = q => { const src = this.finde(q.key); return `${q.t === 'S' ? 'Sieger' : 'Verlierer'} ${src ? (istPaar(src) ? `${this.kurzLabel(src.labelA)}–${this.kurzLabel(src.labelB)}` : this.bezeichnung(src)) : '?'}`; };
+    playoffSpiele().filter(istFolge).sort((a, b) => a.runde - b.runde).forEach(g => {
+      g.labelA = name(g.quelleA); g.labelB = name(g.quelleB);
+      if (hatErgebnis(g)) return;
+      const wer = q => { const [s, v] = this.ausgang(this.finde(q.key), pkt); return q.t === 'S' ? s : v; };
+      g.klasseA = wer(g.quelleA); g.klasseB = wer(g.quelleB);
+    });
+  },
+  /** Reihenfolge für Liste und Planung: Sonderspiele, Runde 1 (Rang 1 zuerst), Folgerunden, Zusatzspiele. */
   reihenfolge(liste) {
-    const rang = g => (g.art === 'sonder' ? 0 : g.art === 'einzeln' ? 2 : 1);
-    return liste.slice().sort((a, b) => rang(a) - rang(b) || (a.nr ?? 0) - (b.nr ?? 0) || (a.platzVon ?? 0) - (b.platzVon ?? 0) || (a.pos ?? 0) - (b.pos ?? 0));
+    const art = g => (g.art === 'sonder' ? 0 : istPaar(g) ? 1 : istFolge(g) ? 2 : 3);
+    return liste.slice().sort((a, b) => art(a) - art(b) || (a.runde ?? 1) - (b.runde ?? 1) || (a.rang ?? 0) - (b.rang ?? 0)
+      || String(a.prefix || '').localeCompare(String(b.prefix || '')) || (a.paarIdx ?? 0) - (b.paarIdx ?? 0) || (a.pos ?? 0) - (b.pos ?? 0));
   },
   /** Vergleicht vorhandene Spiele mit den Soll-Paarungen laut Tabelle. */
   abweichungen() {
-    const soll = this.soll(), ist = playoffSpiele(), out = [];
-    soll.paare.forEach(p => {
-      const g = ist.find(x => istPaar(x) && x.nr === p.nr);
-      if (!g) out.push(`${p.nr === 1 ? 'Finale' : 'Spiel um Platz ' + p.platzVon} fehlt`);
-      else if (g.klasseA !== p.klasseA || g.klasseB !== p.klasseB) out.push(`${this.bezeichnung(g)}: laut Tabelle jetzt ${klasseName(p.klasseA)} – ${klasseName(p.klasseB)}`);
+    const soll = this.soll(), out = [], keys = new Set();
+    soll.erste.forEach(e => {
+      const key = `paar:${e.paarIdx}:${e.rang}`, g = this.finde(key); keys.add(key);
+      if (!g) out.push(`Spiel ${this.kurzLabel(e.labelA)} – ${this.kurzLabel(e.labelB)} fehlt`);
+      else if (g.klasseA !== e.klasseA || g.klasseB !== e.klasseB) out.push(`${this.bezeichnung(g)}: laut Tabelle jetzt ${klasseName(e.klasseA)} – ${klasseName(e.klasseB)}`);
     });
     soll.einzeln.forEach(e => {
-      const g = ist.find(x => x.art === 'einzeln' && x.platzVon === e.platz);
+      const g = this.finde(`einzeln:${e.paarIdx}:${e.rang}`);
       if (!g) out.push(`Zusatzspiel für ${e.label} fehlt`);
       else if (g.klasseA !== e.klasseId) out.push(`Zusatzspiel: laut Tabelle jetzt ${klasseName(e.klasseId)} (${e.label})`);
     });
-    ist.forEach(g => { if (istPaar(g) && !soll.paare.some(p => p.nr === g.nr)) out.push(`${this.bezeichnung(g)} ist laut Tabelle nicht mehr vorgesehen`); });
+    playoffSpiele().filter(istPaar).forEach(g => { if (!keys.has(this.schluessel(g))) out.push(`${this.bezeichnung(g)} ist laut Tabelle nicht mehr vorgesehen`); });
     return out;
   },
-  /** Übernimmt die Paarungen aus der Tabelle. Spiele mit Ergebnis bleiben unverändert. */
+  /** Übernimmt Paarungen aus der Tabelle, legt Folgerunden/Zusatzspiele an. Spiele mit Ergebnis bleiben unverändert. */
   aktualisieren() {
-    const soll = this.soll(), warn = [];
+    const soll = this.soll(), warn = [], sollKeys = new Set();
     const neuesSpiel = extra => { const g = { id: uid('p'), phase: 'playoff', gruppeId: null, sportart: null, hallenId: null, slot: null, toreA: null, toreB: null, ...extra }; S.spiele.push(g); return g; };
-    for (const p of soll.paare) {
-      const g = playoffSpiele().find(x => istPaar(x) && x.nr === p.nr) || neuesSpiel({ art: 'paar', nr: p.nr, sportart: S.playoff.sportWahl[p.nr] || null, sieger: null, vermerk: '' });
-      if (hatErgebnis(g) && g.klasseA && (g.klasseA !== p.klasseA || g.klasseB !== p.klasseB)) { warn.push(`${this.bezeichnung(g)} hat bereits ein Ergebnis und wurde nicht geändert.`); continue; }
-      Object.assign(g, { art: 'paar', platzVon: p.platzVon, labelA: p.labelA, labelB: p.labelB, klasseA: p.klasseA, klasseB: p.klasseB });
+    const ersteJeRang = new Map();
+    for (const e of soll.erste) {
+      const key = `paar:${e.paarIdx}:${e.rang}`; sollKeys.add(key);
+      if (!ersteJeRang.has(e.rang)) ersteJeRang.set(e.rang, []);
+      ersteJeRang.get(e.rang)[e.paarIdx] = key;
+      const g = this.finde(key) || neuesSpiel({ art: 'paar', paarIdx: e.paarIdx, rang: e.rang, nr: e.rang, sportart: S.playoff.sportWahl[key] || null, sieger: null, vermerk: '' });
+      if (hatErgebnis(g) && g.klasseA && (g.klasseA !== e.klasseA || g.klasseB !== e.klasseB)) { warn.push(`${this.bezeichnung(g)} hat bereits ein Ergebnis und wurde nicht geändert.`); continue; }
+      Object.assign(g, { art: 'paar', paarIdx: e.paarIdx, rang: e.rang, nr: e.rang, labelA: e.labelA, labelB: e.labelB, klasseA: e.klasseA, klasseB: e.klasseB });
     }
+    const P = this.einGruppenModus() ? 1 : this.anzahlPaare();
+    ersteJeRang.forEach((keys, rang) => {
+      if (keys.filter(Boolean).length !== P) return;   // Folgerunden nur, wenn alle Gruppenpaare diesen Rang haben
+      this.folgeStruktur(rang, keys).forEach(f => {
+        sollKeys.add(f.key);
+        const g = this.finde(f.key) || neuesSpiel({ art: 'folge', rang: f.rang, runde: f.runde, prefix: f.prefix, pos: f.pos, sportart: S.playoff.sportWahl[f.key] || null, sieger: null, vermerk: '', klasseA: null, klasseB: null });
+        Object.assign(g, { quelleA: f.quelleA, quelleB: f.quelleB });
+      });
+    });
     for (const e of soll.einzeln) {
-      const g = playoffSpiele().find(x => x.art === 'einzeln' && x.platzVon === e.platz) || neuesSpiel({ art: 'einzeln', platzVon: e.platz, klasseB: null, textB: '' });
+      const key = `einzeln:${e.paarIdx}:${e.rang}`; sollKeys.add(key);
+      const g = this.finde(key) || neuesSpiel({ art: 'einzeln', paarIdx: e.paarIdx, rang: e.rang, klasseB: null, textB: '' });
       if (hatErgebnis(g) && g.klasseA && g.klasseA !== e.klasseId) { warn.push(`${this.bezeichnung(g)} hat bereits ein Ergebnis und wurde nicht geändert.`); continue; }
       Object.assign(g, { klasseA: e.klasseId, labelA: e.label, labelB: 'Gegner frei wählbar' });
     }
-    S.spiele = S.spiele.filter(g => g.phase !== 'playoff' || g.art === 'sonder' || hatErgebnis(g)
-      || (istPaar(g) ? soll.paare.some(p => p.nr === g.nr) : soll.einzeln.some(e => e.platz === g.platzVon)));
+    S.spiele = S.spiele.filter(g => g.phase !== 'playoff' || g.art === 'sonder' || hatErgebnis(g) || sollKeys.has(this.schluessel(g)));
     // Sonderspiel (z. B. Allstars) für Gruppen ohne Platzierungsspiele – nur einmal automatisch anlegen
     if (!S.playoff.sonderAngelegt && !playoffSpiele().some(g => g.art === 'sonder') && this.andereGruppen().length) {
       this.andereGruppen().forEach(g => this.sonderspielNeu(`Allstars ${g.name}`, 'Allstars'));
       S.playoff.sonderAngelegt = true;
     }
+    this.aufloesen();
     this.standardSportarten();
     this.planen(false);
     return warn;
   },
   sonderspielNeu(textA, textB) {
-    const pos = Math.max(0, ...playoffSpiele().map(g => g.pos || 0)) + 1;
+    const pos = Math.max(0, ...playoffSpiele().filter(g => g.art === 'sonder').map(g => g.pos || 0)) + 1;
     const g = { id: uid('p'), phase: 'playoff', art: 'sonder', pos, gruppeId: null, klasseA: null, klasseB: null, textA, textB, sportart: null, hallenId: null, slot: null, toreA: null, toreB: null };
     S.spiele.push(g);
     return g;
   },
-  /** Spiele ohne Sportart erhalten die Sportarten der Hallen der Reihe nach (T1, T2, …) – so füllt eine Runde alle Felder. */
+  /**
+   * Spiele ohne Sportart erhalten die Sportarten der Hallen der Reihe nach (T1, T2, …) und gelten als „automatisch“:
+   * Beim Planen dürfen sie in jede freie Halle und übernehmen deren Sportart. Selbst gewählte Sportarten bleiben fest.
+   */
   standardSportarten() {
     const hallenSport = S.hallen.map(h => h.sportart).filter(id => spielSportarten().some(s => s.id === id));
     const liste = hallenSport.length ? hallenSport : spielSportarten().map(s => s.id);
-    this.reihenfolge(playoffSpiele()).forEach((g, i) => {
+    // je Runde der Platzierungsspiele neu ab T1 zählen
+    const zaehler = new Map();
+    this.reihenfolge(playoffSpiele()).forEach(g => {
+      const ebene = istFolge(g) ? g.runde : 1, i = zaehler.get(ebene) || 0;
+      zaehler.set(ebene, i + 1);
       if (g.sportart && S.sportarten.some(s => s.id === g.sportart)) return;
       g.sportart = liste[i % liste.length];
-      if (istPaar(g)) S.playoff.sportWahl[g.nr] = g.sportart;
+      g.sportAuto = true;
     });
   },
-  /** Verteilt Spiele ohne festen Platz frühestmöglich auf passende Hallen; optional Finale allein am Schluss. */
+  /** Das Spiel um Platz 1/2. */
+  istFinale(g) { return istPlatzierung(g) && this.bezeichnung(g).startsWith('Finale'); },
+  /** Verteilt Spiele ohne festen Platz frühestmöglich (Folgerunden nach ihren Vorspielen); optional Finale allein am Schluss. */
   planen(alleNeu) {
     playoffSpiele().forEach(g => { if (this.istAus(g)) { g.slot = null; g.hallenId = null; } });
     const spiele = this.aktive();
     const finaleZuletzt = S.playoff.finaleZuletzt && spiele.length > 1;
-    const istFinale = g => istPaar(g) && g.nr === 1;
     // Platzierungsspiele dürfen in jeder Halle stattfinden – eine vorhandene Zuordnung bleibt bestehen
     const passt = g => !!halleVon(g.hallenId) && g.slot !== null && g.slot !== undefined;
-    const fix = spiele.filter(g => hatErgebnis(g) || (!alleNeu && passt(g) && !(finaleZuletzt && istFinale(g))));
+    const fix = spiele.filter(g => hatErgebnis(g) || (!alleNeu && passt(g) && !(finaleZuletzt && this.istFinale(g))));
     const frei = this.reihenfolge(spiele.filter(g => !fix.includes(g)));
     const belegt = new Set(), klassen = new Set();
     const merke = g => { belegt.add(g.slot + '|' + g.hallenId); [g.klasseA, g.klasseB].forEach(k => { if (k) klassen.add(g.slot + '|' + k); }); };
     fix.forEach(merke);
-    const finale = finaleZuletzt ? frei.find(istFinale) : null;
+    const finale = finaleZuletzt ? frei.find(g => this.istFinale(g)) : null;
+    const frueheste = g => {   // Folgerunde frühestens nach ihren Vorspielen
+      if (!istFolge(g)) return 0;
+      const vor = [g.quelleA, g.quelleB].map(q => this.finde(q.key)).filter(x => x && x.slot !== null && x.slot !== undefined);
+      return vor.length ? Math.max(...vor.map(x => x.slot)) + 1 : 0;
+    };
     const setze = (g, ab) => {
       // automatisch: bevorzugt Hallen mit gleicher Vorrunden-Sportart; gibt es keine, dann eine beliebige Spielhalle
-      let hallen = S.hallen.filter(h => h.sportart === g.sportart);
+      let hallen = g.sportAuto ? [] : S.hallen.filter(h => h.sportart === g.sportart);
       if (!hallen.length) hallen = S.hallen.filter(h => !istEinzelSport(h.sportart));
       if (!hallen.length) hallen = S.hallen.slice();
       if (!hallen.length) { g.hallenId = null; g.slot = null; return; }
       for (let t = ab; t < 500; t++) {
         if ([g.klasseA, g.klasseB].some(k => k && klassen.has(t + '|' + k))) continue;
         const h = hallen.find(x => !belegt.has(t + '|' + x.id));
-        if (h) { g.slot = t; g.hallenId = h.id; merke(g); return; }
+        if (h) { g.slot = t; g.hallenId = h.id; if (g.sportAuto && !istEinzelSport(h.sportart)) g.sportart = h.sportart; merke(g); return; }
       }
     };
-    frei.forEach(g => { if (g !== finale) setze(g, 0); });
-    if (finale) setze(finale, Math.max(-1, ...spiele.filter(g => g !== finale && g.slot !== null && g.slot !== undefined).map(g => g.slot)) + 1);
+    frei.forEach(g => { if (g !== finale) setze(g, frueheste(g)); });
+    if (finale) setze(finale, Math.max(frueheste(finale), Math.max(-1, ...spiele.filter(g => g !== finale && g.slot !== null && g.slot !== undefined).map(g => g.slot)) + 1));
   },
-  ohneHalle() { return this.aktive().filter(g => !halleVon(g.hallenId) || g.slot === null || g.slot === undefined); }
+  ohneHalle() { return this.aktive().filter(g => !halleVon(g.hallenId) || g.slot === null || g.slot === undefined); },
+  /** Weg einer Klasse durch die Platzierungsspiele: Folge von 0 (Sieg) / 1 (Niederlage). */
+  pfad(k, start, pkt) {
+    const bits = []; let g = start, offen = false, ohneSpiel = false;
+    while (g) {
+      const [s, v] = this.ausgang(g, pkt);
+      if (this.istAus(g)) ohneSpiel = true;
+      if (s === k) bits.push(0); else if (v === k) bits.push(1);
+      else { if (!this.istAus(g)) offen = true; break; }
+      const key = this.schluessel(g), t = bits[bits.length - 1] ? 'V' : 'S';
+      g = playoffSpiele().find(x => istFolge(x) && [x.quelleA, x.quelleB].some(q => q && q.key === key && q.t === t));
+    }
+    return { klasseId: k, pfad: bits, offen, ohneSpiel };
+  }
 };
 
 const Endstand = {
   /** Endplatzierung: aus den Platzierungsspielen (falls aktiv und angelegt), sonst aus der Vorrunde. */
   berechne() {
     const vr = vorrundenSpiele(), vrFertig = vr.length > 0 && vr.every(hatErgebnis);
-    const paare = playoffSpiele().filter(istPaar);
-    if (S.einstellungen.playoffsAktiv && paare.length) {
-      const soll = Playoff.soll(), liste = [];
-      let alle = true;
-      const pkt = new Map();
-      Playoff.paarGruppen().forEach(gr => Tabelle.berechne(gr).zeilen.forEach(z => pkt.set(z.klasseId, z.punkte)));
-      paare.slice().sort((a, b) => a.nr - b.nr).forEach(g => {
-        if (Playoff.istAus(g)) {   // ohne Spiel: nach Vorrundenpunkten (Gleichstand = geteilter Platz) oder immer geteilt
-          const pa = pkt.get(g.klasseA) ?? 0, pb = pkt.get(g.klasseB) ?? 0;
-          if (S.playoff.ohneSpiel === 'geteilt' || pa === pb) liste.push({ klasseId: g.klasseA, platz: g.platzVon, ohneSpiel: true }, { klasseId: g.klasseB, platz: g.platzVon, ohneSpiel: true });
-          else { const [b, s2] = pa > pb ? [g.klasseA, g.klasseB] : [g.klasseB, g.klasseA]; liste.push({ klasseId: b, platz: g.platzVon, ohneSpiel: true }, { klasseId: s2, platz: g.platzVon + 1, ohneSpiel: true }); }
-          return;
+    if (S.einstellungen.playoffsAktiv && playoffSpiele().some(istPaar)) {
+      Playoff.aufloesen();
+      const soll = Playoff.soll(), pkt = Playoff.punkte(), punkteRegel = S.playoff.ohneSpiel !== 'geteilt';
+      const raenge = [...new Set([...soll.erste.map(e => e.rang), ...soll.einzeln.map(e => e.rang)])].sort((a, b) => a - b);
+      const liste = [];
+      let platz = 1, alle = true;
+      // Vergleich zweier Wege; gleicher bekannter Weg → Vorrundenpunkte (sofern eingestellt) oder Gleichstand
+      const weg = (a, b) => { for (let i = 0; i < Math.min(a.pfad.length, b.pfad.length); i++) if (a.pfad[i] !== b.pfad[i]) return a.pfad[i] - b.pfad[i]; return 0; };
+      const pk = x => pkt.get(x.klasseId) ?? 0;
+      const gleich = (a, b) => weg(a, b) === 0 && (a.offen || b.offen || !punkteRegel || pk(a) === pk(b));
+      for (const r of raenge) {
+        const teil = [];
+        soll.erste.filter(e => e.rang === r).forEach(e => {
+          const g = Playoff.finde(`paar:${e.paarIdx}:${r}`);
+          [e.klasseA, e.klasseB].forEach(k => teil.push(g && g.klasseA === e.klasseA && g.klasseB === e.klasseB ? Playoff.pfad(k, g, pkt) : { klasseId: k, pfad: [], offen: true }));
+        });
+        soll.einzeln.filter(e => e.rang === r).forEach(e => teil.push({ klasseId: e.klasseId, pfad: [2], offen: false }));
+        teil.sort((a, b) => weg(a, b) || (a.offen || b.offen || !punkteRegel ? 0 : pk(b) - pk(a)) || sortNat(klasseName(a.klasseId), klasseName(b.klasseId)));
+        for (let i = 0; i < teil.length;) {
+          let j = i + 1;
+          while (j < teil.length && gleich(teil[i], teil[j])) j++;
+          const offen = teil.slice(i, j).some(x => x.offen);
+          if (offen) alle = false;
+          teil.slice(i, j).forEach(x => liste.push({ klasseId: x.klasseId, platz: platz + i, offen, ohneSpiel: x.ohneSpiel || (j - i > 1 && !offen) || (!x.offen && x.pfad.length < Playoff.folgeRunden(r) + 1 && x.pfad[0] !== 2),
+            platzText: offen ? (j - i > 1 ? `Platz ${platz + i}–${platz + j - 1} (offen)` : `Platz ${platz + i} (offen)`) : `${platz + i}. Platz` }));
+          i = j;
         }
-        const s = Playoff.sieger(g);
-        if (s) liste.push({ klasseId: s, platz: g.platzVon }, { klasseId: s === g.klasseA ? g.klasseB : g.klasseA, platz: g.platzVon + 1 });
-        else { alle = false; liste.push({ klasseId: g.klasseA, platz: g.platzVon, offen: true }, { klasseId: g.klasseB, platz: g.platzVon, offen: true }); }
-      });
-      soll.einzeln.forEach(e => { if (!liste.some(x => x.klasseId === e.klasseId)) liste.push({ klasseId: e.klasseId, platz: e.platz }); });
-      liste.sort((a, b) => a.platz - b.platz || sortNat(klasseName(a.klasseId), klasseName(b.klasseId)));
-      liste.forEach(e => { e.gruppe = gruppeVon(e.klasseId)?.name || ''; e.platzText = e.offen ? `Platz ${e.platz}/${e.platz + 1} (offen)` : `${e.platz}. Platz`; });
+        platz += teil.length;
+      }
+      liste.forEach(e => { e.gruppe = gruppeVon(e.klasseId)?.name || ''; });
       // Gruppen ohne Platzierungsspiele: Platzierung innerhalb der Gruppe nach Vorrundenpunkten
       let extraGleich = false;
       Playoff.andereGruppen().forEach(g => Tabelle.berechne(g).zeilen.forEach(z => {
@@ -1958,6 +2115,7 @@ const UI = {
     }
   },
   render() {
+    if (S.einstellungen.playoffsAktiv && playoffSpiele().some(istFolge)) Playoff.aufloesen();
     $('#tabs').innerHTML = this.TABS.map(t => `<button class="tab" role="tab" data-tab="${t.id}" aria-selected="${t.id === this.tab}">
       <span class="nr">${t.nr}</span>${esc(t.titel)}${this.erledigt(t.id) ? ' <span class="ok" title="erledigt">✓</span>' : ''}</button>`).join('');
     const p = $('#panel');
@@ -2710,6 +2868,7 @@ async function spielVerschieben(id, slot, hallenId) {
   const k = klassenKonflikte(sp.phase, [[sp, slot]]);
   if (k.length && !(await UI.frage('Konflikt', `<p>${k.map(esc).join('<br>')}</p><p>Trotzdem verschieben? Der Konflikt wird rot markiert.</p>`, 'Trotzdem verschieben'))) return UI.render();
   sp.slot = slot; sp.hallenId = hallenId;
+  if (sp.phase === 'playoff') sp.sportAuto = false;   // von Hand gesetzt: Sportart bleibt
   geaendert();
 }
 async function spieleTauschen(id1, id2) {
@@ -2722,6 +2881,7 @@ async function spieleTauschen(id1, id2) {
   const k = klassenKonflikte(a.phase, [[a, b.slot], [b, a.slot]]);
   if (k.length && !(await UI.frage('Konflikt', `<p>${k.map(esc).join('<br>')}</p><p>Trotzdem tauschen? Der Konflikt wird rot markiert.</p>`, 'Trotzdem tauschen'))) return UI.render();
   [a.slot, b.slot] = [b.slot, a.slot]; [a.hallenId, b.hallenId] = [b.hallenId, a.hallenId];
+  if (a.phase === 'playoff') { a.sportAuto = false; b.sportAuto = false; }
   geaendert();
 }
 AKTION['pdf-gesamt'] = el => pdfAktion(() => PDF.gesamtplan(el.dataset.phase));
@@ -2869,13 +3029,29 @@ function endstandHTML() {
 /* ---------------- Schritt 7: Platzierungsspiele ---------------- */
 UI.RENDER.playoffs = () => {
   const aktiv = S.einstellungen.playoffsAktiv, pg = Playoff.paarGruppen(), andere = Playoff.andereGruppen();
-  const gOpt = S.gruppen.map(g => [g.id, g.name]);
+  const gOpt = S.gruppen.map(g => [g.id, g.name]), paare = Playoff.paare(), einG = Playoff.einGruppenModus();
+  const frei = S.gruppen.filter(g => !pg.includes(g));
+  const maxF = Playoff.maxFolgeRunden(), raenge = Playoff.soll().erste.filter(e => e.paarIdx === 0).map(e => e.rang);
+  const folgeText = (r, n) => {
+    if (!n) return 'keine – Platz nach Vorrundenpunkten';
+    if (paare.length === 2) { const b = Playoff.bloecke().start.get(r) || 1; return b === 1 ? 'Finale + Spiel um Platz 3' : `Spiele um Platz ${b}/${b + 1} und ${b + 2}/${b + 3}`; }
+    return n === maxF ? `${n} weitere Runden (vollständige Platzierung)` : `${n} weitere Runde${n === 1 ? '' : 'n'}`;
+  };
   let html = `<div class="karte"><h2>Platzierungsspiele</h2>
     <label class="check"><input type="checkbox" data-c="po-aktiv" ${aktiv ? 'checked' : ''}> Platzierungsspiele durchführen</label>
-    ${aktiv && S.gruppen.length >= 3 ? `<div class="zeile"><span>Platzierungsspiele zwischen</span>
-      <select data-c="po-gruppe" data-pos="0" aria-label="erste Gruppe">${optionen(gOpt, pg[0].id)}</select><span>und</span>
-      <select data-c="po-gruppe" data-pos="1" aria-label="zweite Gruppe">${optionen(gOpt, pg[1].id)}</select></div>` : ''}
-    <p class="klein">${pg.length === 2 ? `Paarungen: 1. ${esc(pg[0].name)} gegen 1. ${esc(pg[1].name)}, 2. gegen 2. usw. Der Sieger erhält den besseren Platz – der Sieger des ersten Spiels ist Turniersieger.` : 'Bei einer Gruppe: 1. gegen 2., 3. gegen 4. usw.'}
+    ${aktiv && !einG ? `<h3>Runde 1: Gruppenpaare</h3>
+      ${paare.map(([a, b], i) => `<div class="zeile"><span>Paar ${i + 1}:</span>
+        <select data-c="po-paar" data-paar="${i}" data-pos="0" aria-label="erste Gruppe">${optionen(gOpt, a.id)}</select><span>gegen</span>
+        <select data-c="po-paar" data-paar="${i}" data-pos="1" aria-label="zweite Gruppe">${optionen(gOpt, b.id)}</select>
+        ${paare.length > 1 ? `<button class="btn btn-klein btn-gefahr" data-a="po-paar-weg" data-paar="${i}">Entfernen</button>` : ''}</div>`).join('')}
+      ${frei.length >= 2 ? '<div class="zeile"><button class="btn btn-klein" data-a="po-paar-hinzu">+ Gruppenpaar</button></div>' : ''}
+      ${maxF ? `<h3>Weitere Runden (Sieger gegen Sieger, Verlierer gegen Verlierer)</h3>
+        <div class="tab-scroll"><table class="tab-std"><tbody>${raenge.map(r => `<tr><td><b>${r}. der Gruppen</b></td><td>
+          <select data-c="po-folge" data-rang="${r}" aria-label="Weitere Runden für Rang ${r}">${optionen(Array.from({ length: maxF + 1 }, (_, n) => [String(n), folgeText(r, n)]), Playoff.folgeRunden(r))}</select></td></tr>`).join('')}</tbody></table></div>
+        <p class="klein">Beispiel bei zwei Gruppenpaaren: Sieger (1. A – 1. B) gegen Sieger (1. C – 1. D) ist das Finale, die beiden Verlierer spielen um Platz 3.
+          Ohne weitere Runde entscheiden die Vorrundenpunkte (bzw. geteilter Platz, siehe unten).</p>`
+        : paare.length > 1 ? '<p class="klein">Weitere Runden (Sieger gegen Sieger) sind bei 2, 4 oder 8 Gruppenpaaren möglich.</p>' : ''}` : ''}
+    <p class="klein">${einG ? 'Bei einer Gruppe: 1. gegen 2., 3. gegen 4. usw.' : 'Je Gruppenpaar: 1. gegen 1., 2. gegen 2. usw. Der Sieger erhält den besseren Platz.'}
       ${andere.length ? `${andere.map(g => esc(g.name)).join(', ')}: keine Platzierungsspiele, Platzierung nach Vorrundenpunkten; dafür ein Sonderspiel (z. B. Allstars) mit frei wählbaren Namen.` : ''}
       Klassen ohne Gegenplatz erhalten ein Zusatzspiel mit frei wählbarem Gegner (ohne Einfluss auf die Platzierung). Je Spiel eine frei wählbare Sportart – änderbar, solange kein Ergebnis eingetragen ist.</p></div>`;
   if (!aktiv) return html + '<div class="hinweis">Die Platzierungsrunde ist gestrichen. Die Endplatzierung ergibt sich direkt aus der Vorrunden-Tabelle (bei mehreren Gruppen je Gruppe). Wieder einschalten: Häkchen oben oder in Schritt 1.</div>';
@@ -2907,10 +3083,12 @@ UI.RENDER.playoffs = () => {
       Pausentext und Abschluss erscheinen in den Plänen und im PDF „Gesamtablauf“.</p>
     ${hinweise.length ? `<div class="hinweis warn"><ul>${hinweise.map(h => `<li>${h}</li>`).join('')}</ul></div>` : ''}
     ${spiele.some(istPaar) ? (() => {
-      const paare = spiele.filter(istPaar), anzAktiv = paare.filter(g => !Playoff.istAus(g)).length;
-      const muster = paare.every(g => Playoff.istAus(g) === (g.nr > anzAktiv)) && spiele.filter(g => g.art === 'einzeln').every(g => Playoff.istAus(g) === (anzAktiv < paare.length));
-      const wert = !muster ? 'individuell' : anzAktiv === paare.length ? 'alle' : String(anzAktiv);
-      const opt = [['alle', 'alle Platzierungsspiele'], ...paare.slice(0, -1).map(g => [String(g.nr), g.nr === 1 ? `nur ${Playoff.kurzLabel(g.labelA).replace(/ Gr\. .*/, '')} gegen ${Playoff.kurzLabel(g.labelB).replace(/ Gr\. .*/, '')} (Finale)` : `bis ${Playoff.bezeichnung(g)}`]), ...(muster ? [] : [['individuell', 'individuell (siehe Häkchen unten)']])];
+      const pl = spiele.filter(istPlatzierung), maxR = Math.max(...pl.map(g => g.rang));
+      const aktivR = Math.max(0, ...pl.filter(g => !Playoff.istAus(g)).map(g => g.rang));
+      const muster = pl.every(g => Playoff.istAus(g) === (g.rang > aktivR)) && spiele.filter(g => g.art === 'einzeln').every(g => Playoff.istAus(g) === (aktivR < maxR));
+      const wert = !muster ? 'individuell' : aktivR === maxR ? 'alle' : String(aktivR);
+      const rangText = r => { const g = pl.find(x => istPaar(x) && x.rang === r); return einG ? (r === 1 ? 'nur Spiel um Platz 1/2 (Finale)' : `bis ${Playoff.bezeichnung(g)}`) : (r === 1 ? 'nur die Gruppenersten' : `bis zu den ${r}. der Gruppen`); };
+      const opt = [['alle', 'alle Platzierungsspiele'], ...Array.from({ length: maxR - 1 }, (_, i) => [String(i + 1), rangText(i + 1)]), ...(muster ? [] : [['individuell', 'individuell (siehe Häkchen unten)']])];
       return `<div class="zeile">
         <label class="feld"><span>Gespielt werden</span><select data-c="po-umfang">${optionen(opt, wert)}</select></label>
         <label class="feld" style="flex:1 1 260px"><span>Platzierung bei ausgesetzten Platzierungsspielen</span><select data-c="po-ohnespiel" class="breit">${optionen([['punkte', 'nach Vorrundenpunkten (mehr Punkte = besserer Platz)'], ['geteilt', 'geteilter Platz (z. B. beide 3. Platz)']], S.playoff.ohneSpiel || 'punkte')}</select></label>
@@ -2929,22 +3107,23 @@ UI.RENDER.playoffs = () => {
     if (g.art === 'einzeln') return `<small>${esc(g.labelA)}</small> <b>${esc(klasseName(g.klasseA))}</b><br>
         <select data-c="po-gegner" data-id="${g.id}" aria-label="Gegner">${optionen([['', 'Gegner wählen …'], ...S.klassen.filter(k => k.id !== g.klasseA).map(k => [k.id, k.name])], g.klasseB || '')}</select>
         <input type="text" value="${esc(g.textB || '')}" data-c="po-textB" data-id="${g.id}" placeholder="oder freier Name" style="margin-top:.3rem;width:100%">`;
-    return `<small>${esc(g.labelA)}</small> <b>${esc(klasseName(g.klasseA))}</b><br><small>${esc(g.labelB)}</small> <b>${esc(klasseName(g.klasseB))}</b>`;
+    const wer = k => (k ? esc(klasseName(k)) : '<i class="klein">steht noch nicht fest</i>');
+    return `<small>${esc(g.labelA)}</small> <b data-teilnehmer="${g.id}-A">${wer(g.klasseA)}</b><br><small>${esc(g.labelB)}</small> <b data-teilnehmer="${g.id}-B">${wer(g.klasseB)}</b>`;
   };
   html += `<div class="karte"><h3 style="margin-top:0">Spiele</h3><datalist id="vermerke">${PLAYOFF_VERMERKE.map(v => `<option value="${esc(v)}">`).join('')}</datalist>
     <div class="tab-scroll"><table class="tab-std"><thead><tr><th>Spiel</th><th>Paarung</th><th>Sportart</th><th>Halle</th><th>Runde / Beginn</th><th>Ergebnis</th></tr></thead><tbody>
     ${spiele.map(g => {
       const erg = hatErgebnis(g), hallen = S.hallen.filter(h => h.sportart === g.sportart);
-      const unent = erg && g.toreA === g.toreB && istPaar(g), aus = Playoff.istAus(g);
+      const unent = erg && g.toreA === g.toreB && istPlatzierung(g), aus = Playoff.istAus(g);
       if (aus) return `<tr data-zeile="${g.id}" style="opacity:.55"><td><label class="check"><input type="checkbox" data-c="po-spielen" data-id="${g.id}"> spielen</label><br><b>${esc(Playoff.bezeichnung(g))}</b></td>
-        <td style="min-width:190px">${paarung(g)}</td><td colspan="4"><i>ausgesetzt${istPaar(g) ? ` – Platzierung ${S.playoff.ohneSpiel === 'geteilt' ? 'geteilt' : 'nach Vorrundenpunkten'}` : ''}</i></td></tr>`;
+        <td style="min-width:190px">${paarung(g)}</td><td colspan="4"><i>ausgesetzt${istPlatzierung(g) ? ` – Platzierung ${S.playoff.ohneSpiel === 'geteilt' ? 'geteilt' : 'nach Vorrundenpunkten'}` : ''}</i></td></tr>`;
       return `<tr data-zeile="${g.id}"><td><label class="check"><input type="checkbox" data-c="po-spielen" data-id="${g.id}" checked ${erg ? 'disabled title="Ergebnis eingetragen – kann nicht ausgesetzt werden"' : ''}> spielen</label><br><b>${esc(Playoff.bezeichnung(g))}</b>${g.art === 'sonder' ? `<br><button class="btn btn-klein btn-gefahr" data-a="po-sonder-weg" data-id="${g.id}" style="margin-top:.3rem">Entfernen</button>` : ''}</td>
         <td style="min-width:190px">${paarung(g)}</td>
         <td><select data-c="po-sport" data-id="${g.id}" ${erg ? 'disabled title="Ergebnis eingetragen – Sportart fest"' : ''}>${optionen(spielSportarten().map(s => [s.id, s.name]), g.sportart)}</select></td>
         <td><select data-c="po-halle" data-id="${g.id}" aria-label="Halle">${halleVon(g.hallenId) ? '' : '<option value="">– Halle wählen –</option>'}${optionen(S.hallen.map(h => [h.id, h.sportart === g.sportart ? h.name : `${h.name} (Vorrunde: ${sportName(h.sportart)})`]), g.hallenId || '')}</select></td>
         <td><select data-c="po-runde" data-id="${g.id}">${optionen(rundenOpt, g.slot ?? '')}</select></td>
         <td>${torFelder(g)}
-          ${istPaar(g) ? `<div data-sieger="${g.id}" ${unent ? '' : 'hidden'} style="margin-top:.4rem">
+          ${istPlatzierung(g) ? `<div data-sieger="${g.id}" ${unent ? '' : 'hidden'} style="margin-top:.4rem">
             <div class="hinweis warn" style="margin:0 0 .3rem">Unentschieden – Sieger festlegen:</div>
             <select data-c="po-sieger" data-id="${g.id}" aria-label="Sieger">${optionen([['', 'Sieger wählen …'], [g.klasseA, klasseName(g.klasseA)], [g.klasseB, klasseName(g.klasseB)]], g.sieger || '')}</select>
             <input type="text" list="vermerke" placeholder="Vermerk, z. B. nach Siebenmeterwerfen" value="${esc(g.vermerk || '')}" data-c="po-vermerk" data-id="${g.id}" style="margin-top:.3rem;width:100%">
@@ -2962,6 +3141,11 @@ UI.RENDER.playoffs = () => {
   return html;
 };
 function poZeileAktualisieren(g) {
+  Playoff.aufloesen();
+  playoffSpiele().filter(istFolge).forEach(f => ['A', 'B'].forEach(t => {
+    const el = $(`[data-teilnehmer="${f.id}-${t}"]`), k = f['klasse' + t];
+    if (el) el.innerHTML = k ? esc(klasseName(k)) : '<i class="klein">steht noch nicht fest</i>';
+  }));
   const box = $(`[data-sieger="${g.id}"]`);
   if (box) box.hidden = !(hatErgebnis(g) && g.toreA === g.toreB);
   const sel = $(`[data-c="po-sport"][data-id="${g.id}"]`);
@@ -2977,7 +3161,7 @@ AENDERUNG['po-umfang'] = el => {
   const n = el.value === 'alle' ? Infinity : ganz(el.value, 1), gesperrt = [];
   playoffSpiele().forEach(g => {
     if (g.art === 'sonder') return;
-    const aus = istPaar(g) ? g.nr > n : n !== Infinity;
+    const aus = istPlatzierung(g) ? g.rang > n : n !== Infinity;
     if (!Playoff.setzeAus(g, aus)) gesperrt.push(Playoff.bezeichnung(g));
   });
   Playoff.planen(false); Playoff.kompakt(); geaendert();
@@ -2992,14 +3176,30 @@ AENDERUNG['po-vorpause'] = el => { S.playoff.vorPauseMin = Math.max(0, zahl(el.v
 AENDERUNG['po-vortext'] = el => { S.playoff.vorPauseText = el.value.trim(); geaendert(); };
 AENDERUNG['po-nachtext'] = el => { S.playoff.nachText = el.value.trim(); geaendert(false); };
 AENDERUNG['po-finale'] = el => { S.playoff.finaleZuletzt = el.checked; Playoff.planen(false); geaendert(); };
-AENDERUNG['po-gruppe'] = el => {
-  const pg = Playoff.paarGruppen().map(g => g.id), pos = +el.dataset.pos;
-  if (pg[1 - pos] === el.value) pg[1 - pos] = pg[pos];
-  pg[pos] = el.value;
-  S.playoff.paarGruppen = pg;
+/* Gruppenpaare und Folgerunden: Änderungen werden sofort in die Spiele übernommen (Spiele mit Ergebnis bleiben) */
+function poStrukturNeu() {
   if (playoffSpiele().length) { const w = Playoff.aktualisieren(); if (w.length) UI.meldung('Hinweis', `<ul>${w.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`); }
   geaendert();
+}
+AENDERUNG['po-paar'] = el => {
+  const paare = Playoff.paare().map(p => p.map(g => g.id)), i = +el.dataset.paar, pos = +el.dataset.pos;
+  // gewählte Gruppe aus einem anderen Paar herausnehmen (tauschen)
+  paare.forEach((p, j) => p.forEach((id, k) => { if (id === el.value && !(j === i && k === pos)) p[k] = paare[i][pos]; }));
+  paare[i][pos] = el.value;
+  S.playoff.paare = paare;
+  poStrukturNeu();
 };
+AKTION['po-paar-hinzu'] = () => {
+  const benutzt = new Set(Playoff.paarGruppen()), frei = S.gruppen.filter(g => !benutzt.has(g));
+  if (frei.length < 2) return;
+  S.playoff.paare = [...Playoff.paare().map(p => p.map(g => g.id)), [frei[0].id, frei[1].id]];
+  poStrukturNeu();
+};
+AKTION['po-paar-weg'] = el => {
+  S.playoff.paare = Playoff.paare().map(p => p.map(g => g.id)).filter((_, i) => i !== +el.dataset.paar);
+  poStrukturNeu();
+};
+AENDERUNG['po-folge'] = el => { (S.playoff.folgeRunden || (S.playoff.folgeRunden = {}))[el.dataset.rang] = ganz(el.value, 0); poStrukturNeu(); };
 AKTION['po-uebernehmen'] = async () => {
   const warn = Playoff.aktualisieren();
   geaendert();
@@ -3030,7 +3230,7 @@ AENDERUNG['po-gegner'] = el => {
 AENDERUNG['po-sport'] = el => {
   const g = poSpiel(el.dataset.id);
   if (hatErgebnis(g)) { el.value = g.sportart; return; }
-  g.sportart = el.value; if (istPaar(g)) S.playoff.sportWahl[g.nr] = el.value;
+  g.sportart = el.value; g.sportAuto = false; if (istPlatzierung(g)) S.playoff.sportWahl[Playoff.schluessel(g)] = el.value;
   // Halle und Runde bleiben unverändert (Halle frei wählbar); nur ein Spiel ohne Halle wird neu verteilt
   if (!halleVon(g.hallenId)) Playoff.planen(false);
   geaendert();
@@ -3040,7 +3240,7 @@ AENDERUNG['po-halle'] = el => {
   if (!el.value) return;
   if (g.slot === null || g.slot === undefined) g.slot = 0;
   if (Playoff.aktive().some(o => o !== g && o.slot === g.slot && o.hallenId === el.value)) UI.toast('Achtung: Diese Halle ist in dieser Runde schon belegt (rot markiert). Ggf. Runde ändern oder Spiele tauschen.', 'fehler', 6000);
-  g.hallenId = el.value; geaendert();
+  g.hallenId = el.value; g.sportAuto = false; geaendert();
 };
 AENDERUNG['po-runde'] = el => {
   const g = poSpiel(el.dataset.id), t = ganz(el.value, 0);
