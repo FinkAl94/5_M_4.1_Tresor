@@ -435,8 +435,28 @@ function neuerStand() {
   };
 }
 
+/* ---------- Schutz beim Laden (Backup-Datei oder Zwischenstand) ----------
+   Eine Backup-Datei kann von außen kommen. Damit sie keinen Code einschleusen kann, werden alle
+   Zeichenketten gesäubert, die keine Freitexte sind (IDs, Schlüssel, Auswahlwerte), und Bild, Farben
+   und Zahlen geprüft. Freitexte (Namen, Texte) werden bei der Anzeige immer maskiert (esc). */
+const FREITEXT_FELDER = new Set(['name', 'text', 'textA', 'textB', 'label', 'labelA', 'labelB', 'vermerk', 'zeit', 'formel',
+  'vorPauseText', 'nachText', 'vorlageName', 'vorlageDataUrl', 'kurz', 'farbe', 'verteilBuchstabe']);
+const istFarbe = f => /^#[0-9a-f]{6}$/i.test(String(f || ''));
+const istBildDataUrl = u => typeof u === 'string' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(u);
+function tiefSaeubern(wert, feld) {
+  if (typeof wert === 'string') return FREITEXT_FELDER.has(feld) ? wert.slice(0, feld === 'vorlageDataUrl' ? 30000000 : 2000) : wert.replace(/[^A-Za-z0-9_:.\-]/g, '').slice(0, 200);
+  if (Array.isArray(wert)) return wert.map(x => tiefSaeubern(x, feld));
+  if (wert && typeof wert === 'object') {
+    const o = {};
+    Object.keys(wert).forEach(k => { const sk = k.replace(/[^A-Za-z0-9_:.\-]/g, ''); if (sk && sk !== '__proto__' && sk !== 'constructor' && sk !== 'prototype') o[sk] = tiefSaeubern(wert[k], sk); });
+    return o;
+  }
+  return (typeof wert === 'number' && Number.isFinite(wert)) || typeof wert === 'boolean' ? wert : null;
+}
+
 /** Bringt einen (älteren oder unvollständigen) Stand auf das aktuelle Format. */
 function migriere(d) {
+  d = tiefSaeubern(d, '');
   if (!d || typeof d !== 'object' || !Array.isArray(d.klassen) || !Array.isArray(d.gruppen) || !Array.isArray(d.hallen) || !Array.isArray(d.spiele)) {
     throw new Error('Die Datei enthält keinen gültigen Turnierstand.');
   }
@@ -449,7 +469,7 @@ function migriere(d) {
   // Stationseinstellungen stehen jetzt an der Sportart (früher: d.parcours); Farben ergänzen
   r.sportarten = r.sportarten.map((s, i) => {
     const std = SPORTARTEN_STANDARD.find(x => x.id === s.id), n = Object.assign({}, s);
-    if (!n.farbe) n.farbe = std?.farbe || SPORT_FARBEN[i % SPORT_FARBEN.length];
+    if (!istFarbe(n.farbe)) n.farbe = std?.farbe || SPORT_FARBEN[i % SPORT_FARBEN.length];
     if (!n.kurz) n.kurz = (n.name || '?').slice(0, 2).toUpperCase();
     if (n.einzel) {
       if (n.aktiv === undefined) n.aktiv = d.parcours ? !!d.parcours.aktiv : false;
@@ -464,7 +484,13 @@ function migriere(d) {
   r.einstellungen.spieldauer = Object.assign({}, b.einstellungen.spieldauer, d.einstellungen?.spieldauer);
   r.einstellungen.blockpausen = Array.isArray(r.einstellungen.blockpausen) ? r.einstellungen.blockpausen : [];
   const ps = {};
-  r.sportarten.forEach(s => { ps[s.id] = Object.assign(standardSchema(), d.einstellungen?.punkteSchema?.[s.id]); });
+  r.sportarten.forEach(s => {
+    const sc = Object.assign(standardSchema(), d.einstellungen?.punkteSchema?.[s.id]);
+    ['sieg', 'unentschieden', 'niederlage', 'faktorTore', 'faktorDiff'].forEach(k => { sc[k] = zahl(sc[k], 0); });
+    ['deckelTore', 'deckelDiff', 'minPunkte', 'maxPunkte'].forEach(k => { sc[k] = zahlOderNull(sc[k]); });
+    sc.modus = sc.modus === 'formel' ? 'formel' : 'parameter'; sc.formel = String(sc.formel ?? '');
+    ps[s.id] = sc;
+  });
   r.einstellungen.punkteSchema = ps;
   const tb = Array.isArray(d.einstellungen?.tieBreak) ? d.einstellungen.tieBreak.filter(k => TIEBREAK_KRITERIEN[k.id]) : [];
   Object.keys(TIEBREAK_KRITERIEN).forEach(id => { if (!tb.some(k => k.id === id)) tb.push({ id, an: false }); });
@@ -483,6 +509,13 @@ function migriere(d) {
   delete r.playoff.paarGruppen;
   r.urkunden = Object.assign({}, b.urkunden, d.urkunden);
   if (!Array.isArray(r.urkunden.felder)) r.urkunden.felder = standardFelder(r.urkunden.ausrichtung);
+  if (r.urkunden.ausrichtung !== 'quer') r.urkunden.ausrichtung = 'hoch';
+  if (r.urkunden.vorlageDataUrl && !istBildDataUrl(r.urkunden.vorlageDataUrl)) { r.urkunden.vorlageDataUrl = null; r.urkunden.vorlageName = ''; }
+  r.urkunden.felder = r.urkunden.felder.filter(f => f && typeof f === 'object').map(f => Object.assign({}, f, {
+    id: f.id || uid('f'), text: String(f.text ?? ''), x: zahl(f.x, 100), y: zahl(f.y, 100), size: Math.max(1, Math.min(300, zahl(f.size, 12))),
+    farbe: istFarbe(f.farbe) ? f.farbe : '#1f2a37', font: ['helvetica', 'times', 'courier'].includes(f.font) ? f.font : 'helvetica',
+    style: ['normal', 'bold', 'italic', 'bolditalic'].includes(f.style) ? f.style : 'normal', align: ['left', 'center', 'right'].includes(f.align) ? f.align : 'center'
+  }));
   r.meta = Object.assign({}, b.meta, d.meta);
   r.losWerte = d.losWerte || {};
   r.gruppen = r.gruppen.slice(0, MAX_GRUPPEN);
@@ -1502,9 +1535,26 @@ const Playoff = {
     const pkt = this.punkte(), name = q => { const src = this.finde(q.key); return `${q.t === 'S' ? 'Sieger' : 'Verlierer'} ${src ? (istPaar(src) ? `${this.kurzLabel(src.labelA)}–${this.kurzLabel(src.labelB)}` : this.bezeichnung(src)) : '?'}`; };
     playoffSpiele().filter(istFolge).sort((a, b) => a.runde - b.runde).forEach(g => {
       g.labelA = name(g.quelleA); g.labelB = name(g.quelleB);
-      if (hatErgebnis(g)) return;
-      const wer = q => { const [s, v] = this.ausgang(this.finde(q.key), pkt); return q.t === 'S' ? s : v; };
-      g.klasseA = wer(g.quelleA); g.klasseB = wer(g.quelleB);
+      if (hatErgebnis(g) && g.klasseA && g.klasseB) return;   // gespieltes Spiel bleibt, wie es war (siehe veraltet())
+      const [a, b] = this.teilnehmerSoll(g, pkt);
+      g.klasseA = a; g.klasseB = b;
+    });
+  },
+  /** Teilnehmer einer Folgerunde laut aktuellem Ausgang der Vorspiele. */
+  teilnehmerSoll(g, pkt = this.punkte()) {
+    const wer = q => { const [s, v] = this.ausgang(this.finde(q.key), pkt); return q.t === 'S' ? s : v; };
+    return [wer(g.quelleA), wer(g.quelleB)];
+  },
+  /** Folgespiele mit Ergebnis, deren Teilnehmer nicht mehr zu den (nachträglich geänderten) Vorspielen passen. */
+  veraltet() {
+    const pkt = this.punkte();
+    return playoffSpiele().filter(g => istFolge(g) && hatErgebnis(g) && g.klasseA && g.klasseB).filter(g => { const [a, b] = this.teilnehmerSoll(g, pkt); return a !== g.klasseA || b !== g.klasseB; });
+  },
+  /** Hinweise zu Folgespielen, deren Vorspiel-Ergebnis nachträglich geändert wurde. */
+  veraltetHinweise() {
+    return this.veraltet().map(g => {
+      const [a, b] = this.teilnehmerSoll(g);
+      return `${this.bezeichnung(g)} wurde mit ${klasseName(g.klasseA)} – ${klasseName(g.klasseB)} gewertet, laut Vorspielen wären es jetzt ${a ? klasseName(a) : '?'} – ${b ? klasseName(b) : '?'}. Ergebnis dieses Spiels löschen, damit die Teilnehmer aktualisiert werden.`;
     });
   },
   /** Reihenfolge für Liste und Planung: Sonderspiele, Runde 1 (Rang 1 zuerst), Folgerunden, Zusatzspiele. */
@@ -2020,7 +2070,7 @@ const PDF = {
   },
   urkundeSeite(doc, e) {
     const U = S.urkunden, { W, H } = seitenmass(U.ausrichtung);
-    if (U.vorlageDataUrl) {
+    if (istBildDataUrl(U.vorlageDataUrl)) {
       const fmt = /^data:image\/png/.test(U.vorlageDataUrl) ? 'PNG' : 'JPEG';
       doc.addImage(U.vorlageDataUrl, fmt, 0, 0, W, H, 'urkundenvorlage', 'FAST');
     } else {
@@ -2116,7 +2166,7 @@ const UI = {
   },
   render() {
     if (S.einstellungen.playoffsAktiv && playoffSpiele().some(istFolge)) Playoff.aufloesen();
-    $('#tabs').innerHTML = this.TABS.map(t => `<button class="tab" role="tab" data-tab="${t.id}" aria-selected="${t.id === this.tab}">
+    $('#tabs').innerHTML = this.TABS.map(t => `<button class="tab" role="tab" data-tab="${esc(t.id)}" aria-selected="${esc(t.id === this.tab)}">
       <span class="nr">${t.nr}</span>${esc(t.titel)}${this.erledigt(t.id) ? ' <span class="ok" title="erledigt">✓</span>' : ''}</button>`).join('');
     const p = $('#panel');
     try { p.innerHTML = this.RENDER[this.tab](); }
@@ -2129,7 +2179,7 @@ const UI = {
     try { localStorage.setItem(LS_TAB, tab); } catch (e) { /* egal */ }
     this.render();
     window.scrollTo(0, 0);
-    const b = $(`.tab[data-tab="${tab}"]`); if (b && b.scrollIntoView) b.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const b = $(`.tab[data-tab="${esc(tab)}"]`); if (b && b.scrollIntoView) b.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   },
   kopfAktualisieren() {
     if (!S) return;
@@ -2145,7 +2195,7 @@ const UI = {
       const min = Math.floor((Date.now() - lb) / 60000);
       const txt = min < 1 ? 'gerade eben' : min < 60 ? `vor ${min} Minute${min === 1 ? '' : 'n'}` : min < 1440 ? `vor ${Math.floor(min / 60)} Std. ${min % 60} Min.` : 'am ' + new Date(lb).toLocaleDateString('de-DE');
       const alt = S.meta.geaendertAm > lb + 1000 && min >= 30;
-      bs.innerHTML = `<span class="${alt ? 'warn' : ''}">Letztes Backup: ${txt}</span>`;
+      bs.innerHTML = `<span class="${esc(alt ? 'warn' : '')}">Letztes Backup: ${txt}</span>`;
     }
     document.documentElement.style.setProperty('--kopf-h', $('.kopf').offsetHeight + 'px');
   },
@@ -2161,7 +2211,7 @@ const UI = {
       const hg = document.createElement('div');
       hg.className = 'modal-hg';
       hg.innerHTML = `<div class="modal" role="dialog" aria-modal="true"><h2>${esc(titel)}</h2><div>${html}</div>
-        <div class="knoepfe">${knoepfe.map((k, i) => `<button class="btn ${k.klasse || ''}" data-k="${i}">${esc(k.text)}</button>`).join('')}</div></div>`;
+        <div class="knoepfe">${knoepfe.map((k, i) => `<button class="btn ${k.klasse || ''}" data-k="${esc(i)}">${esc(k.text)}</button>`).join('')}</div></div>`;
       const fertig = wert => { const daten = lesen ? lesen(hg) : null; hg.remove(); document.removeEventListener('keydown', esc_); res(lesen ? { wert, daten } : wert); };
       const esc_ = e => { if (e.key === 'Escape') fertig(knoepfe[0].wert === undefined ? false : knoepfe[0].wert); };
       hg.addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (b) fertig(knoepfe[+b.dataset.k].wert); });
@@ -2288,14 +2338,14 @@ UI.RENDER.rahmen = () => {
   const E = S.einstellungen;
   const hallen = S.hallen.map((h, i) => `<tr>
       <td class="zahl">${i + 1}</td>
-      <td><input type="text" class="breit" value="${esc(h.name)}" data-c="halle-name" data-id="${h.id}" aria-label="Name Halle ${i + 1}"></td>
-      <td><select data-c="halle-sport" data-id="${h.id}" aria-label="Sportart Halle ${i + 1}">${optionen(S.sportarten.map(s => [s.id, s.name]), h.sportart)}</select></td>
-      <td><button class="btn btn-klein btn-gefahr" data-a="halle-loeschen" data-id="${h.id}" title="Halle entfernen" ${S.hallen.length <= 1 ? 'disabled' : ''}>✕</button></td></tr>`).join('');
+      <td><input type="text" class="breit" value="${esc(h.name)}" data-c="halle-name" data-id="${esc(h.id)}" aria-label="Name Halle ${i + 1}"></td>
+      <td><select data-c="halle-sport" data-id="${esc(h.id)}" aria-label="Sportart Halle ${i + 1}">${optionen(S.sportarten.map(s => [s.id, s.name]), h.sportart)}</select></td>
+      <td><button class="btn btn-klein btn-gefahr" data-a="halle-loeschen" data-id="${esc(h.id)}" title="Halle entfernen" ${S.hallen.length <= 1 ? 'disabled' : ''}>✕</button></td></tr>`).join('');
   const pausen = E.blockpausen.map(p => `<div class="zeile">
-      <label class="feld"><span>Bezeichnung</span><input type="text" value="${esc(p.name)}" data-c="bp-name" data-id="${p.id}"></label>
-      <label class="feld"><span>Beginn</span><input type="time" value="${esc(p.beginn)}" data-c="bp-beginn" data-id="${p.id}"></label>
-      <label class="feld"><span>Dauer (Min.)</span><input type="number" min="1" max="240" value="${esc(p.dauer)}" data-c="bp-dauer" data-id="${p.id}"></label>
-      <button class="btn btn-klein btn-gefahr" data-a="bp-loeschen" data-id="${p.id}" style="align-self:flex-end">Entfernen</button></div>`).join('');
+      <label class="feld"><span>Bezeichnung</span><input type="text" value="${esc(p.name)}" data-c="bp-name" data-id="${esc(p.id)}"></label>
+      <label class="feld"><span>Beginn</span><input type="time" value="${esc(p.beginn)}" data-c="bp-beginn" data-id="${esc(p.id)}"></label>
+      <label class="feld"><span>Dauer (Min.)</span><input type="number" min="1" max="240" value="${esc(p.dauer)}" data-c="bp-dauer" data-id="${esc(p.id)}"></label>
+      <button class="btn btn-klein btn-gefahr" data-a="bp-loeschen" data-id="${esc(p.id)}" style="align-self:flex-end">Entfernen</button></div>`).join('');
   return `
   <div class="karte"><h2>Turnier</h2>
     <div class="zeile">
@@ -2307,7 +2357,7 @@ UI.RENDER.rahmen = () => {
   <div class="karte"><h2>Turniermodus Vorrunde</h2>
     <div class="zeile">
       <label class="feld" style="flex:1 1 320px"><span>Modus</span><select data-c="vr-modus" class="breit">${optionen([['jeSportart', 'Feste Anzahl Spiele je Sportart (wie Turnier 2025)'], ['jederGegenJeden', 'Jeder gegen jeden in jeder Sportart']], Planer.modus())}</select></label>
-      ${Planer.modus() === 'jeSportart' ? `<label class="feld"><span>Spiele je Sportart und Klasse</span><input type="number" min="1" max="8" value="${Planer.spieleJeSportart()}" data-c="vr-k"></label>` : ''}
+      ${Planer.modus() === 'jeSportart' ? `<label class="feld"><span>Spiele je Sportart und Klasse</span><input type="number" min="1" max="8" value="${esc(Planer.spieleJeSportart())}" data-c="vr-k"></label>` : ''}
     </div>
     <p class="klein">${Planer.modus() === 'jeSportart'
       ? `Jede Klasse spielt jede Ballsportart ${Planer.spieleJeSportart()}× (zusammen ${Planer.spieleJeSportart() * spielSportarten().length} Spiele)${aktiveStationen().length ? ` und geht je einmal zu: ${aktiveStationen().map(s => esc(s.name)).join(', ')}` : ''}. Gegner kommen aus der eigenen Gruppe; bei ungerader Gruppengröße auch aus einer anderen Gruppe. Gewertet wird je Klasse – gruppenübergreifende Spiele zählen für beide Klassen.`
@@ -2321,13 +2371,13 @@ UI.RENDER.rahmen = () => {
   <div class="karte"><h2>Sportarten</h2>
     <div class="tab-scroll"><table class="tab-std"><thead><tr><th>Name</th><th>Art</th><th>Einstellungen</th><th></th></tr></thead><tbody>
     ${S.sportarten.map(s => `<tr>
-      <td><span class="sport sp-${esc(s.id)}" style="--sp-farbe:${esc(sportFarbe(s.id))}"></span> <input type="text" value="${esc(s.name)}" data-c="sport-name" data-id="${s.id}" aria-label="Name der Sportart" style="width:calc(100% - 1.4rem)"></td>
+      <td><span class="sport sp-${esc(s.id)}" style="--sp-farbe:${esc(sportFarbe(s.id))}"></span> <input type="text" value="${esc(s.name)}" data-c="sport-name" data-id="${esc(s.id)}" aria-label="Name der Sportart" style="width:calc(100% - 1.4rem)"></td>
       <td><span class="badge">${s.einzel ? 'Station' : 'Spiel'}</span></td>
       <td>${s.einzel
-        ? `<div class="zeile"><label class="check"><input type="checkbox" data-c="station-aktiv" data-id="${s.id}" ${s.aktiv !== false ? 'checked' : ''}> durchführen</label>
-           ${s.aktiv !== false ? `<label>Klassen je Runde <input type="number" min="1" max="12" class="kurz" value="${kapVon(s.id)}" data-c="station-kap" data-id="${s.id}"></label>` : ''}</div>`
+        ? `<div class="zeile"><label class="check"><input type="checkbox" data-c="station-aktiv" data-id="${esc(s.id)}" ${s.aktiv !== false ? 'checked' : ''}> durchführen</label>
+           ${s.aktiv !== false ? `<label>Klassen je Runde <input type="number" min="1" max="12" class="kurz" value="${esc(kapVon(s.id))}" data-c="station-kap" data-id="${esc(s.id)}"></label>` : ''}</div>`
         : '<span class="klein">Spieldauer: „Zeiten Vorrunde“ · Punkteschema: ⚙</span>'}</td>
-      <td><button class="btn btn-klein btn-gefahr" data-a="sport-loeschen" data-id="${s.id}" ${!s.einzel && spielSportarten().length <= 1 ? 'disabled title="Mindestens eine Spielsportart ist nötig"' : ''}>Entfernen</button></td></tr>`).join('')}
+      <td><button class="btn btn-klein btn-gefahr" data-a="sport-loeschen" data-id="${esc(s.id)}" ${!s.einzel && spielSportarten().length <= 1 ? 'disabled title="Mindestens eine Spielsportart ist nötig"' : ''}>Entfernen</button></td></tr>`).join('')}
     </tbody></table></div>
     <div class="zeile" style="margin-top:.6rem">
       <input type="text" id="sport-neu" placeholder="z. B. Volleyball" aria-label="Neue Sportart" style="flex:1 1 200px">
@@ -2340,7 +2390,7 @@ UI.RENDER.rahmen = () => {
   <div class="karte"><h2>Hallen / Felder</h2>
     <div class="zeile"><span>Anzahl Hallen/Felder</span>
       <button class="btn btn-icon" data-a="hallen-minus" ${S.hallen.length <= 1 ? 'disabled' : ''} aria-label="Halle entfernen">−</button>
-      <input type="number" min="1" max="12" value="${S.hallen.length}" data-c="hallen-anzahl" class="kurz" aria-label="Anzahl Hallen">
+      <input type="number" min="1" max="12" value="${esc(S.hallen.length)}" data-c="hallen-anzahl" class="kurz" aria-label="Anzahl Hallen">
       <button class="btn btn-icon" data-a="hallen-plus" ${S.hallen.length >= 12 ? 'disabled' : ''} aria-label="Halle hinzufügen">+</button>
       <span class="klein">Jede Halle hat genau eine Sportart; mehrere Hallen dürfen dieselbe Sportart haben.</span>
     </div>
@@ -2352,7 +2402,7 @@ UI.RENDER.rahmen = () => {
       <label class="feld"><span>Spätestes Ende</span><input type="time" value="${esc(E.endzeit)}" data-c="endzeit"></label>
       <label class="feld"><span>Wechselzeit zwischen Spielen (Min.)</span><input type="number" min="0" max="60" value="${esc(E.pauseMin)}" data-c="pauseMin"></label>
     </div>
-    <div class="zeile">${spielSportarten().map(s => `<label class="feld"><span>Spieldauer ${esc(s.name)} (Min.)</span><input type="number" min="1" max="120" value="${esc(E.spieldauer[s.id])}" data-c="spieldauer" data-id="${s.id}"></label>`).join('')}</div>
+    <div class="zeile">${spielSportarten().map(s => `<label class="feld"><span>Spieldauer ${esc(s.name)} (Min.)</span><input type="number" min="1" max="120" value="${esc(E.spieldauer[s.id])}" data-c="spieldauer" data-id="${esc(s.id)}"></label>`).join('')}</div>
     <p class="klein">Alle Spiele einer Runde beginnen gleichzeitig (gemeinsames Signal). Der Rundentakt richtet sich nach der längsten Spieldauer plus Wechselzeit; kürzere Spiele enden entsprechend früher.</p>
     <h3>Blockpausen (z. B. Mittagspause)</h3>
     ${pausen || '<p class="klein">Keine Blockpausen.</p>'}
@@ -2490,9 +2540,9 @@ AENDERUNG['bp-dauer'] = el => { bp(el.dataset.id).dauer = Math.max(1, zahl(el.va
 UI.RENDER.klassen = () => {
   const liste = S.klassen.map(k => {
     const g = gruppeVon(k.id);
-    return `<div class="eintrag"><input type="text" value="${esc(k.name)}" data-c="klasse-name" data-id="${k.id}" aria-label="Klasse umbenennen">
+    return `<div class="eintrag"><input type="text" value="${esc(k.name)}" data-c="klasse-name" data-id="${esc(k.id)}" aria-label="Klasse umbenennen">
       ${g ? gruppenBadge(g.id) : '<span class="badge" title="noch keiner Gruppe zugeordnet">–</span>'}
-      <button class="btn btn-klein btn-gefahr btn-icon" data-a="klasse-loeschen" data-id="${k.id}" title="Klasse löschen" aria-label="Klasse ${esc(k.name)} löschen">✕</button></div>`;
+      <button class="btn btn-klein btn-gefahr btn-icon" data-a="klasse-loeschen" data-id="${esc(k.id)}" title="Klasse löschen" aria-label="Klasse ${esc(k.name)} löschen">✕</button></div>`;
   }).join('');
   return `<div class="karte"><h2>Klassen</h2>
     <div class="zeile"><textarea id="klassen-neu" rows="2" style="flex:1 1 300px;width:auto" placeholder="z. B. 5a, 5b, 5c, 6a, 6b, 6c" aria-label="Neue Klassen"></textarea>
@@ -2551,8 +2601,8 @@ UI.RENDER.gruppen = () => {
   const ohne = S.klassen.filter(k => !gruppeVon(k.id));
   const nS = spielSportarten().length;
   const plusParcours = aktiveStationen().map(s => ` + ${esc(s.name)}`).join('');
-  const chip = (k, gid) => `<span class="chip" draggable="true" data-chip="${k.id}">${esc(k.name)}
-      <select data-c="klasse-gruppe" data-id="${k.id}" aria-label="Gruppe für ${esc(k.name)}">
+  const chip = (k, gid) => `<span class="chip" draggable="true" data-chip="${esc(k.id)}">${esc(k.name)}
+      <select data-c="klasse-gruppe" data-id="${esc(k.id)}" aria-label="Gruppe für ${esc(k.name)}">
         <option value="">ohne</option>${optionen(S.gruppen.map(g => [g.id, g.name]), gid)}</select></span>`;
   const karten = S.gruppen.map((g, i) => {
     const kl = g.klassenIds.map(id => S.klassen.find(k => k.id === id)).filter(Boolean), n = kl.length;
@@ -2563,9 +2613,9 @@ UI.RENDER.gruppen = () => {
       ? 'Ungerade Anzahl: Je Runde spielt eine Klasse dieser Gruppe ggf. gegen eine Klasse einer anderen Gruppe – das plant die App automatisch.'
       : 'Ungerade Anzahl: In jeder Runde hat mindestens eine Klasse dieser Gruppe spielfrei (Freilos) – das berücksichtigt der Spielplan automatisch.';
     return `<div class="karte gruppe-karte ${GRUPPEN_IDS[i] || ''}">
-      <div class="zeile"><input type="text" value="${esc(g.name)}" data-c="gruppe-name" data-id="${g.id}" aria-label="Gruppenname" style="font-weight:700"><span class="trenner"></span>
+      <div class="zeile"><input type="text" value="${esc(g.name)}" data-c="gruppe-name" data-id="${esc(g.id)}" aria-label="Gruppenname" style="font-weight:700"><span class="trenner"></span>
         <span class="klein">${info}</span></div>
-      <div class="chipliste" data-dropgruppe="${g.id}" style="margin-top:.6rem">${kl.map(k => chip(k, g.id)).join('') || '<span class="klein">Klassen hierher ziehen oder per Auswahl zuordnen.</span>'}</div>
+      <div class="chipliste" data-dropgruppe="${esc(g.id)}" style="margin-top:.6rem">${kl.map(k => chip(k, g.id)).join('') || '<span class="klein">Klassen hierher ziehen oder per Auswahl zuordnen.</span>'}</div>
       ${n === 1 && Planer.modus() === 'jederGegenJeden' ? '<div class="hinweis warn">Eine Gruppe mit nur einer Klasse hat keine Spiele.</div>' : ''}
       ${n % 2 === 1 && (n > 1 || Planer.modus() === 'jeSportart') ? `<p class="klein">${ungerade}</p>` : ''}
     </div>`;
@@ -2574,9 +2624,9 @@ UI.RENDER.gruppen = () => {
     <div class="zeile">
       <span>Anzahl Gruppen</span>
       <div class="umschalter" role="group">
-        <button class="btn btn-icon" data-a="gruppen-anzahl" data-n="${S.gruppen.length - 1}" ${S.gruppen.length <= 1 ? 'disabled' : ''} aria-label="Gruppe entfernen">−</button>
-        <input type="number" min="1" max="${MAX_GRUPPEN}" value="${S.gruppen.length}" data-c="gruppen-anzahl" class="kurz" aria-label="Anzahl Gruppen" style="border-radius:0">
-        <button class="btn btn-icon" data-a="gruppen-anzahl" data-n="${S.gruppen.length + 1}" ${S.gruppen.length >= MAX_GRUPPEN ? 'disabled' : ''} aria-label="Gruppe hinzufügen">+</button>
+        <button class="btn btn-icon" data-a="gruppen-anzahl" data-n="${esc(S.gruppen.length - 1)}" ${S.gruppen.length <= 1 ? 'disabled' : ''} aria-label="Gruppe entfernen">−</button>
+        <input type="number" min="1" max="${esc(MAX_GRUPPEN)}" value="${esc(S.gruppen.length)}" data-c="gruppen-anzahl" class="kurz" aria-label="Anzahl Gruppen" style="border-radius:0">
+        <button class="btn btn-icon" data-a="gruppen-anzahl" data-n="${esc(S.gruppen.length + 1)}" ${S.gruppen.length >= MAX_GRUPPEN ? 'disabled' : ''} aria-label="Gruppe hinzufügen">+</button>
       </div>
       <span class="trenner"></span>
       <select data-c="verteilung" aria-label="Art der Verteilung">${optionen([['buchstabe', 'nach Buchstabe in eigene Gruppe, Rest zufällig'], ['zufall', 'zufällig'], ['block', 'nach Reihenfolge (blockweise)'], ['abwechselnd', 'nach Reihenfolge (abwechselnd)']], UI.verteilung)}</select>
@@ -2704,7 +2754,7 @@ UI.RENDER.spielplan = () => {
   if (vr.length) {
     inhalt = `<div class="karte">
       <div class="zeile"><div class="umschalter" role="group" aria-label="Ansicht">
-        ${[['raster', 'Gesamtübersicht'], ['halle', 'Je Halle'], ['klasse', 'Je Klasse']].map(([v, t]) => `<button class="btn" data-a="ansicht" data-v="${v}" aria-pressed="${UI.ansicht === v}">${t}</button>`).join('')}
+        ${[['raster', 'Gesamtübersicht'], ['halle', 'Je Halle'], ['klasse', 'Je Klasse']].map(([v, t]) => `<button class="btn" data-a="ansicht" data-v="${esc(v)}" aria-pressed="${esc(UI.ansicht === v)}">${t}</button>`).join('')}
       </div><span class="trenner"></span>
       <div class="legende">${S.gruppen.map(g => gruppenBadge(g.id)).join('')}${vr.some(sp => !spielGruppe(sp)) ? '<span class="badge" title="gestrichelter Rand">gruppenübergreifend</span>' : ''}</div></div>
       ${UI.ansicht === 'raster' ? `<p class="klein" id="raster-hinweis">${UI.auswahl ? 'Ziel antippen: freies Feld = verschieben, anderes Spiel = tauschen. Erneut antippen = abbrechen.' : 'Verschieben: Spiel antippen, dann Zielfeld oder anderes Spiel (Tausch) antippen – mit der Maus auch per Ziehen. Die letzte Zeile ist eine freie Zusatzrunde.'}</p>
@@ -2746,12 +2796,12 @@ function rasterHTML(phase) {
   const spalten = S.hallen.length + 1 + (frei ? 1 : 0);
   let html = `<div class="tab-scroll"><table class="raster"><thead><tr><th>Zeit</th>${S.hallen.map(h => `<th>${esc(h.name)}<br>${sportSpan(h.sportart)}</th>`).join('')}${frei ? '<th>spielfrei</th>' : ''}</tr></thead><tbody>`;
   for (let i = 0; i <= n; i++) {
-    z.pausen.filter(p => p.vorSlot === i).forEach(p => { html += `<tr class="pause"><td colspan="${spalten}">${minZuZeit(p.start)}–${minZuZeit(p.ende)} · ${esc(p.name)}</td></tr>`; });
+    z.pausen.filter(p => p.vorSlot === i).forEach(p => { html += `<tr class="pause"><td colspan="${esc(spalten)}">${minZuZeit(p.start)}–${minZuZeit(p.ende)} · ${esc(p.name)}</td></tr>`; });
     const inRunde = spiele.filter(sp => sp.slot === i);
     html += `<tr><td class="zeit">${minZuZeit(z.slots[i].start)}<small>${i === n ? 'Zusatzrunde' : 'Runde ' + (i + 1)}</small></td>`;
     S.hallen.forEach(h => {
       const sp = inRunde.filter(x => x.hallenId === h.id);
-      html += `<td><div class="zelle ${sp.length ? '' : 'leer'} ${UI.auswahl ? 'aktiv' : ''}" data-zelle data-slot="${i}" data-halle="${h.id}" data-phase="${phase}">${sp.map(x => spielKarte(x, konf)).join('')}</div></td>`;
+      html += `<td><div class="zelle ${sp.length ? '' : 'leer'} ${UI.auswahl ? 'aktiv' : ''}" data-zelle data-slot="${esc(i)}" data-halle="${esc(h.id)}" data-phase="${esc(phase)}">${sp.map(x => spielKarte(x, konf)).join('')}</div></td>`;
     });
     if (frei) { const spielen = new Set(inRunde.flatMap(x => [x.klasseA, x.klasseB])); html += `<td class="frei">${i === n ? '' : alle.filter(id => !spielen.has(id)).map(id => esc(klasseName(id))).sort(sortNat).join(', ')}</td>`; }
     html += '</tr>';
@@ -2764,7 +2814,7 @@ function rasterHTML(phase) {
 function spielKarte(sp, konf) {
   const erg = hatErgebnis(sp) ? `<span class="erg">${istParcours(sp) ? fmtZahl(sp.punkte) + ' P.' : sp.toreA + ':' + sp.toreB}</span>` : '';
   const info = (sp.phase === 'playoff' ? esc(Playoff.bezeichnung(sp)) : esc(spielGruppenText(sp))) + (sp.slot === null || !halleVon(sp.hallenId) || sportWeichtAb(sp) ? ' · ' + esc(sportName(sp.sportart)) : '');
-  return `<div class="spiel ${sp.phase === 'playoff' ? 'po' : gruppeKlasse(spielGruppe(sp))} ${UI.auswahl === sp.id ? 'gewaehlt' : ''} ${konf && konf.has(sp.id) ? 'konflikt' : ''}" data-spiel="${sp.id}" draggable="true" title="${esc(sportName(sp.sportart))}">
+  return `<div class="spiel ${sp.phase === 'playoff' ? 'po' : gruppeKlasse(spielGruppe(sp))} ${UI.auswahl === sp.id ? 'gewaehlt' : ''} ${konf && konf.has(sp.id) ? 'konflikt' : ''}" data-spiel="${esc(sp.id)}" draggable="true" title="${esc(sportName(sp.sportart))}">
     <div class="paar">${istParcours(sp) ? esc(klasseName(sp.klasseA)) : `${esc(teamName(sp, 'A'))} – ${esc(teamName(sp, 'B'))}`}</div><div class="info"><span>${info}</span>${erg}</div></div>`;
 }
 function hallenListeHTML(phase) {
@@ -2786,7 +2836,7 @@ function klassenMatrixHTML() {
       const sp = vr.find(x => x.slot === i && (x.klasseA === id || x.klasseB === id));
       return sp ? `<td class="zahl"><span class="sport sp-${sp.sportart}">${esc(kurz(sp.sportart))}</span><br><small>${istParcours(sp) ? 'Station' : 'vs ' + esc(klasseName(sp.klasseA === id ? sp.klasseB : sp.klasseA))}</small></td>` : '<td class="zahl klein">–</td>';
     }).join('')}</tr>`).join('')}</tbody></table></div>
-    <p class="klein">${S.sportarten.map(s => `${s.kurz || s.name.slice(0, 2)} = ${esc(s.name)}`).join(' · ')}</p>`;
+    <p class="klein">${S.sportarten.map(s => `${esc(s.kurz || s.name.slice(0, 2))} = ${esc(s.name)}`).join(' · ')}</p>`;
 }
 function statistikHTML() {
   const st = Planer.statistik();
@@ -2844,7 +2894,7 @@ function rasterSpielGeklickt(id) {
   UI.auswahl = UI.auswahl === id ? null : id;
   $$('.spiel.gewaehlt').forEach(x => x.classList.remove('gewaehlt'));
   $$('.zelle').forEach(x => x.classList.toggle('aktiv', !!UI.auswahl));
-  if (UI.auswahl) $$(`[data-spiel="${id}"]`).forEach(x => x.classList.add('gewaehlt'));
+  if (UI.auswahl) $$(`[data-spiel="${esc(id)}"]`).forEach(x => x.classList.add('gewaehlt'));
   const h = $('#raster-hinweis');
   if (h) h.textContent = UI.auswahl ? 'Ziel antippen: freies Feld = verschieben, anderes Spiel = tauschen. Erneut antippen = abbrechen.' : 'Verschieben: Spiel antippen, dann Zielfeld oder anderes Spiel (Tausch) antippen.';
 }
@@ -2896,20 +2946,20 @@ AKTION['pdf-laufzettel'] = () => pdfAktion(() => PDF.laufzettel());
 /* ---------------- Schritt 5: Ergebnisse ---------------- */
 function torFelder(sp) {
   return `<div class="erg-eingabe">
-    <input type="number" inputmode="numeric" min="0" step="1" data-tor="A" data-i="tor" data-id="${sp.id}" value="${sp.toreA ?? ''}" aria-label="Tore/Körbe ${esc(klasseName(sp.klasseA))}">
+    <input type="number" inputmode="numeric" min="0" step="1" data-tor="A" data-i="tor" data-id="${esc(sp.id)}" value="${esc(sp.toreA ?? '')}" aria-label="Tore/Körbe ${esc(klasseName(sp.klasseA))}">
     <b>:</b>
-    <input type="number" inputmode="numeric" min="0" step="1" data-tor="B" data-i="tor" data-id="${sp.id}" value="${sp.toreB ?? ''}" aria-label="Tore/Körbe ${esc(klasseName(sp.klasseB))}"></div>`;
+    <input type="number" inputmode="numeric" min="0" step="1" data-tor="B" data-i="tor" data-id="${esc(sp.id)}" value="${esc(sp.toreB ?? '')}" aria-label="Tore/Körbe ${esc(klasseName(sp.klasseB))}"></div>`;
 }
 function ergZeileHTML(sp, z) {
-  if (istParcours(sp)) return `<div class="erg-zeile ${hatErgebnis(sp) ? 'fertig' : ''}" data-zeile="${sp.id}">
+  if (istParcours(sp)) return `<div class="erg-zeile ${hatErgebnis(sp) ? 'fertig' : ''}" data-zeile="${esc(sp.id)}">
     <div class="wann">${minZuZeit(z.slots[sp.slot].start)}<small>Runde ${sp.slot + 1}</small></div>
     <div class="wer"><div class="paar">${esc(klasseName(sp.klasseA))}</div>
       <div class="klein">${sportSpan(sp.sportart)} · ${esc(halleVon(sp.hallenId)?.name || '–')} · ${spielGruppenBadge(sp)}</div></div>
     <div class="erg-eingabe">
-      <input type="text" value="${esc(sp.zeit || '')}" data-c="parcours-zeit" data-id="${sp.id}" placeholder="Zeit" aria-label="Zeit (optional)" style="width:5.5rem;text-align:center">
-      <input type="number" inputmode="decimal" min="0" step="any" data-tor="P" data-i="tor" data-id="${sp.id}" value="${sp.punkte ?? ''}" aria-label="Punkte ${esc(klasseName(sp.klasseA))}" placeholder="Pkt.">
+      <input type="text" value="${esc(sp.zeit || '')}" data-c="parcours-zeit" data-id="${esc(sp.id)}" placeholder="Zeit" aria-label="Zeit (optional)" style="width:5.5rem;text-align:center">
+      <input type="number" inputmode="decimal" min="0" step="any" data-tor="P" data-i="tor" data-id="${esc(sp.id)}" value="${esc(sp.punkte ?? '')}" aria-label="Punkte ${esc(klasseName(sp.klasseA))}" placeholder="Pkt.">
     </div></div>`;
-  return `<div class="erg-zeile ${hatErgebnis(sp) ? 'fertig' : ''}" data-zeile="${sp.id}">
+  return `<div class="erg-zeile ${hatErgebnis(sp) ? 'fertig' : ''}" data-zeile="${esc(sp.id)}">
     <div class="wann">${minZuZeit(z.slots[sp.slot].start)}<small>Runde ${sp.slot + 1}</small></div>
     <div class="wer"><div class="paar">${esc(klasseName(sp.klasseA))} – ${esc(klasseName(sp.klasseB))}</div>
       <div class="klein">${sportSpan(sp.sportart)} · ${esc(halleVon(sp.hallenId)?.name || '–')} · ${spielGruppenBadge(sp)}</div></div>
@@ -2928,7 +2978,7 @@ UI.RENDER.ergebnisse = () => {
     if (sp.slot !== letzte) { zeilen += `<div class="erg-runde">Runde ${sp.slot + 1} · ${minZuZeit(z.slots[sp.slot].start)} Uhr</div>`; letzte = sp.slot; }
     zeilen += ergZeileHTML(sp, z);
   });
-  const sel = (k, leer, liste) => `<select data-c="filter" data-k="${k}" aria-label="Filter">${optionen([['', leer], ...liste], f[k])}</select>`;
+  const sel = (k, leer, liste) => `<select data-c="filter" data-k="${esc(k)}" aria-label="Filter">${optionen([['', leer], ...liste], f[k])}</select>`;
   return `<div class="erg-layout"><div>
     <div class="karte"><h2>Ergebnisse Vorrunde</h2>
       <div class="zeile">
@@ -2961,7 +3011,7 @@ EINGABE.tor = el => {
 };
 function tabelleKompaktHTML(t) {
   return `<table class="tab-std"><thead><tr><th class="zahl">#</th><th>Klasse</th><th class="zahl">Sp.</th><th class="zahl">Diff.</th><th class="zahl">Pkt.</th></tr></thead><tbody>
-    ${t.zeilen.map(z => `<tr class="${z.gleichstand && t.abgeschlossen ? 'gleichstand' : ''}"><td class="zahl">${z.rang}.</td><td><b>${esc(klasseName(z.klasseId))}</b></td><td class="zahl">${z.sp}</td><td class="zahl">${z.tore - z.gegen > 0 ? '+' : ''}${z.tore - z.gegen}</td><td class="zahl"><b>${fmtZahl(z.punkte)}</b></td></tr>`).join('')}</tbody></table>`;
+    ${t.zeilen.map(z => `<tr class="${esc(z.gleichstand && t.abgeschlossen ? 'gleichstand' : '')}"><td class="zahl">${z.rang}.</td><td><b>${esc(klasseName(z.klasseId))}</b></td><td class="zahl">${z.sp}</td><td class="zahl">${z.tore - z.gegen > 0 ? '+' : ''}${z.tore - z.gegen}</td><td class="zahl"><b>${fmtZahl(z.punkte)}</b></td></tr>`).join('')}</tbody></table>`;
 }
 function liveAktualisieren() {
   const el = $('#live-tabelle');
@@ -2976,7 +3026,7 @@ function liveAktualisieren() {
 function tabelleVollHTML(t) {
   return `<div class="tab-scroll"><table class="tab-std"><thead><tr><th class="zahl">Rang</th><th>Klasse</th><th class="zahl">Sp.</th><th class="zahl">S</th><th class="zahl">U</th><th class="zahl">N</th>
     ${aktiveSportarten().map(s => `<th class="zahl">${sportSpan(s.id)}<br><small>${s.einzel ? 'Pkt.' : 'Tore · Pkt.'}</small></th>`).join('')}<th class="zahl">Tore</th><th class="zahl">Diff.</th><th class="zahl">Punkte</th></tr></thead><tbody>
-    ${t.zeilen.map(z => `<tr class="${z.gleichstand && t.abgeschlossen ? 'gleichstand' : ''}"><td class="zahl"><b>${z.rang}.</b>${z.gleichstand && t.abgeschlossen ? ' ⚠' : ''}</td><td><b>${esc(klasseName(z.klasseId))}</b></td>
+    ${t.zeilen.map(z => `<tr class="${esc(z.gleichstand && t.abgeschlossen ? 'gleichstand' : '')}"><td class="zahl"><b>${z.rang}.</b>${z.gleichstand && t.abgeschlossen ? ' ⚠' : ''}</td><td><b>${esc(klasseName(z.klasseId))}</b></td>
       <td class="zahl">${z.sp}${z.offen ? ` <small>(+${z.offen})</small>` : ''}</td><td class="zahl">${z.s}</td><td class="zahl">${z.u}</td><td class="zahl">${z.n}</td>
       ${aktiveSportarten().map(s => { const x = z.sport[s.id]; return s.einzel ? `<td class="zahl"><b>${fmtZahl(x.punkte)}</b></td>` : `<td class="zahl">${x.tore}:${x.gegen} · <b>${fmtZahl(x.punkte)}</b></td>`; }).join('')}
       <td class="zahl">${z.tore}:${z.gegen}</td><td class="zahl">${z.tore - z.gegen > 0 ? '+' : ''}${z.tore - z.gegen}</td><td class="zahl"><b style="font-size:1.1rem">${fmtZahl(z.punkte)}</b></td></tr>`).join('')}
@@ -2990,14 +3040,14 @@ UI.RENDER.tabelle = () => {
     const losGesetzt = g.klassenIds.some(id => S.losWerte[id] !== undefined);
     const gleich = t.abgeschlossen ? t.gleichstaende.map(ids => `<div class="hinweis warn"><b>Gleichstand:</b> ${ids.map(id => esc(klasseName(id))).join(', ')} sind nach allen aktiven Kriterien gleich.
         ${manuell ? `Reihenfolge festlegen (z. B. nach Losentscheid):<ul class="sortliste">${ids.map((id, i) => `<li><span class="name">${i + 1}. ${esc(klasseName(id))}</span>
-          <button class="btn btn-klein btn-icon" data-a="los" data-cluster="${ids.join(',')}" data-pos="${i}" data-r="-1" ${i === 0 ? 'disabled' : ''} aria-label="nach oben">▲</button>
-          <button class="btn btn-klein btn-icon" data-a="los" data-cluster="${ids.join(',')}" data-pos="${i}" data-r="1" ${i === ids.length - 1 ? 'disabled' : ''} aria-label="nach unten">▼</button></li>`).join('')}</ul>
-          <button class="btn btn-klein" data-a="los" data-cluster="${ids.join(',')}" data-pos="0" data-r="0">Reihenfolge so festlegen</button>`
+          <button class="btn btn-klein btn-icon" data-a="los" data-cluster="${esc(ids.join(','))}" data-pos="${esc(i)}" data-r="-1" ${i === 0 ? 'disabled' : ''} aria-label="nach oben">▲</button>
+          <button class="btn btn-klein btn-icon" data-a="los" data-cluster="${esc(ids.join(','))}" data-pos="${esc(i)}" data-r="1" ${i === ids.length - 1 ? 'disabled' : ''} aria-label="nach unten">▼</button></li>`).join('')}</ul>
+          <button class="btn btn-klein" data-a="los" data-cluster="${esc(ids.join(','))}" data-pos="0" data-r="0">Reihenfolge so festlegen</button>`
         : 'Das Kriterium „Manuelle Festlegung“ ist ausgeschaltet (⚙ Punkteschema & Daten).'}</div>`).join('')
       : (t.spieleGewertet ? `<p class="klein">Noch ${t.spieleGesamt - t.spieleGewertet} Spiele offen – Gleichstände werden erst nach dem letzten Spiel markiert.</p>` : '');
     return `<div class="karte gruppe-karte ${GRUPPEN_IDS[gruppeIdx(g.id)] || ''}"><div class="zeile"><h2 style="margin:0">${esc(g.name)}</h2><span class="trenner"></span>
         <span class="klein">${t.spieleGewertet} von ${t.spieleGesamt} Spielen gewertet</span>
-        ${losGesetzt ? `<button class="btn btn-klein" data-a="los-reset" data-gruppe="${g.id}">Manuelle Festlegung zurücksetzen</button>` : ''}</div>
+        ${losGesetzt ? `<button class="btn btn-klein" data-a="los-reset" data-gruppe="${esc(g.id)}">Manuelle Festlegung zurücksetzen</button>` : ''}</div>
       ${tabelleVollHTML(t)}${gleich}</div>`;
   }).join('');
   return `${karten}
@@ -3041,13 +3091,13 @@ UI.RENDER.playoffs = () => {
     <label class="check"><input type="checkbox" data-c="po-aktiv" ${aktiv ? 'checked' : ''}> Platzierungsspiele durchführen</label>
     ${aktiv && !einG ? `<h3>Runde 1: Gruppenpaare</h3>
       ${paare.map(([a, b], i) => `<div class="zeile"><span>Paar ${i + 1}:</span>
-        <select data-c="po-paar" data-paar="${i}" data-pos="0" aria-label="erste Gruppe">${optionen(gOpt, a.id)}</select><span>gegen</span>
-        <select data-c="po-paar" data-paar="${i}" data-pos="1" aria-label="zweite Gruppe">${optionen(gOpt, b.id)}</select>
-        ${paare.length > 1 ? `<button class="btn btn-klein btn-gefahr" data-a="po-paar-weg" data-paar="${i}">Entfernen</button>` : ''}</div>`).join('')}
+        <select data-c="po-paar" data-paar="${esc(i)}" data-pos="0" aria-label="erste Gruppe">${optionen(gOpt, a.id)}</select><span>gegen</span>
+        <select data-c="po-paar" data-paar="${esc(i)}" data-pos="1" aria-label="zweite Gruppe">${optionen(gOpt, b.id)}</select>
+        ${paare.length > 1 ? `<button class="btn btn-klein btn-gefahr" data-a="po-paar-weg" data-paar="${esc(i)}">Entfernen</button>` : ''}</div>`).join('')}
       ${frei.length >= 2 ? '<div class="zeile"><button class="btn btn-klein" data-a="po-paar-hinzu">+ Gruppenpaar</button></div>' : ''}
       ${maxF ? `<h3>Weitere Runden (Sieger gegen Sieger, Verlierer gegen Verlierer)</h3>
         <div class="tab-scroll"><table class="tab-std"><tbody>${raenge.map(r => `<tr><td><b>${r}. der Gruppen</b></td><td>
-          <select data-c="po-folge" data-rang="${r}" aria-label="Weitere Runden für Rang ${r}">${optionen(Array.from({ length: maxF + 1 }, (_, n) => [String(n), folgeText(r, n)]), Playoff.folgeRunden(r))}</select></td></tr>`).join('')}</tbody></table></div>
+          <select data-c="po-folge" data-rang="${esc(r)}" aria-label="Weitere Runden für Rang ${r}">${optionen(Array.from({ length: maxF + 1 }, (_, n) => [String(n), folgeText(r, n)]), Playoff.folgeRunden(r))}</select></td></tr>`).join('')}</tbody></table></div>
         <p class="klein">Beispiel bei zwei Gruppenpaaren: Sieger (1. A – 1. B) gegen Sieger (1. C – 1. D) ist das Finale, die beiden Verlierer spielen um Platz 3.
           Ohne weitere Runde entscheiden die Vorrundenpunkte (bzw. geteilter Platz, siehe unten).</p>`
         : paare.length > 1 ? '<p class="klein">Weitere Runden (Sieger gegen Sieger) sind bei 2, 4 oder 8 Gruppenpaaren möglich.</p>' : ''}` : ''}
@@ -3064,6 +3114,7 @@ UI.RENDER.playoffs = () => {
   if (!vr.length) hinweise.push('Es gibt noch keinen Vorrunden-Spielplan.');
   else if (offen) hinweise.push(`In der Vorrunde sind noch ${offen} Spiele offen – Paarungen sind vorläufig.`);
   if (gleich) hinweise.push('In der Tabelle gibt es noch Gleichstände (Schritt 6).');
+  Playoff.veraltetHinweise().forEach(h => hinweise.push(esc(h)));
   if (abw.length) hinweise.push('Die Paarungen entsprechen nicht mehr der aktuellen Tabelle: ' + abw.map(esc).join('; ') + '. → „Paarungen aus Tabelle übernehmen“.');
   Playoff.ohneHalle().forEach(g => hinweise.push(`${esc(Playoff.bezeichnung(g))}: noch keine Halle/Runde zugewiesen.`));
   const nv = Planer.anzahlRunden('vorrunde');
@@ -3102,11 +3153,11 @@ UI.RENDER.playoffs = () => {
   if (!spiele.length) return html;
   const rundenOpt = Array.from({ length: n + 2 }, (_, i) => [String(i), `Runde ${i + 1} · ${minZuZeit(z.slots[i].start)}`]);
   const paarung = g => {
-    if (g.art === 'sonder') return `<input type="text" value="${esc(g.textA || '')}" data-c="po-text" data-seite="A" data-id="${g.id}" aria-label="Mannschaft 1" style="width:100%">
-        <input type="text" value="${esc(g.textB || '')}" data-c="po-text" data-seite="B" data-id="${g.id}" aria-label="Mannschaft 2" style="width:100%;margin-top:.3rem">`;
+    if (g.art === 'sonder') return `<input type="text" value="${esc(g.textA || '')}" data-c="po-text" data-seite="A" data-id="${esc(g.id)}" aria-label="Mannschaft 1" style="width:100%">
+        <input type="text" value="${esc(g.textB || '')}" data-c="po-text" data-seite="B" data-id="${esc(g.id)}" aria-label="Mannschaft 2" style="width:100%;margin-top:.3rem">`;
     if (g.art === 'einzeln') return `<small>${esc(g.labelA)}</small> <b>${esc(klasseName(g.klasseA))}</b><br>
-        <select data-c="po-gegner" data-id="${g.id}" aria-label="Gegner">${optionen([['', 'Gegner wählen …'], ...S.klassen.filter(k => k.id !== g.klasseA).map(k => [k.id, k.name])], g.klasseB || '')}</select>
-        <input type="text" value="${esc(g.textB || '')}" data-c="po-textB" data-id="${g.id}" placeholder="oder freier Name" style="margin-top:.3rem;width:100%">`;
+        <select data-c="po-gegner" data-id="${esc(g.id)}" aria-label="Gegner">${optionen([['', 'Gegner wählen …'], ...S.klassen.filter(k => k.id !== g.klasseA).map(k => [k.id, k.name])], g.klasseB || '')}</select>
+        <input type="text" value="${esc(g.textB || '')}" data-c="po-textB" data-id="${esc(g.id)}" placeholder="oder freier Name" style="margin-top:.3rem;width:100%">`;
     const wer = k => (k ? esc(klasseName(k)) : '<i class="klein">steht noch nicht fest</i>');
     return `<small>${esc(g.labelA)}</small> <b data-teilnehmer="${g.id}-A">${wer(g.klasseA)}</b><br><small>${esc(g.labelB)}</small> <b data-teilnehmer="${g.id}-B">${wer(g.klasseB)}</b>`;
   };
@@ -3115,18 +3166,18 @@ UI.RENDER.playoffs = () => {
     ${spiele.map(g => {
       const erg = hatErgebnis(g), hallen = S.hallen.filter(h => h.sportart === g.sportart);
       const unent = erg && g.toreA === g.toreB && istPlatzierung(g), aus = Playoff.istAus(g);
-      if (aus) return `<tr data-zeile="${g.id}" style="opacity:.55"><td><label class="check"><input type="checkbox" data-c="po-spielen" data-id="${g.id}"> spielen</label><br><b>${esc(Playoff.bezeichnung(g))}</b></td>
+      if (aus) return `<tr data-zeile="${esc(g.id)}" style="opacity:.55"><td><label class="check"><input type="checkbox" data-c="po-spielen" data-id="${esc(g.id)}"> spielen</label><br><b>${esc(Playoff.bezeichnung(g))}</b></td>
         <td style="min-width:190px">${paarung(g)}</td><td colspan="4"><i>ausgesetzt${istPlatzierung(g) ? ` – Platzierung ${S.playoff.ohneSpiel === 'geteilt' ? 'geteilt' : 'nach Vorrundenpunkten'}` : ''}</i></td></tr>`;
-      return `<tr data-zeile="${g.id}"><td><label class="check"><input type="checkbox" data-c="po-spielen" data-id="${g.id}" checked ${erg ? 'disabled title="Ergebnis eingetragen – kann nicht ausgesetzt werden"' : ''}> spielen</label><br><b>${esc(Playoff.bezeichnung(g))}</b>${g.art === 'sonder' ? `<br><button class="btn btn-klein btn-gefahr" data-a="po-sonder-weg" data-id="${g.id}" style="margin-top:.3rem">Entfernen</button>` : ''}</td>
+      return `<tr data-zeile="${esc(g.id)}"><td><label class="check"><input type="checkbox" data-c="po-spielen" data-id="${esc(g.id)}" checked ${erg ? 'disabled title="Ergebnis eingetragen – kann nicht ausgesetzt werden"' : ''}> spielen</label><br><b>${esc(Playoff.bezeichnung(g))}</b>${g.art === 'sonder' ? `<br><button class="btn btn-klein btn-gefahr" data-a="po-sonder-weg" data-id="${esc(g.id)}" style="margin-top:.3rem">Entfernen</button>` : ''}</td>
         <td style="min-width:190px">${paarung(g)}</td>
-        <td><select data-c="po-sport" data-id="${g.id}" ${erg ? 'disabled title="Ergebnis eingetragen – Sportart fest"' : ''}>${optionen(spielSportarten().map(s => [s.id, s.name]), g.sportart)}</select></td>
-        <td><select data-c="po-halle" data-id="${g.id}" aria-label="Halle">${halleVon(g.hallenId) ? '' : '<option value="">– Halle wählen –</option>'}${optionen(S.hallen.map(h => [h.id, h.sportart === g.sportart ? h.name : `${h.name} (Vorrunde: ${sportName(h.sportart)})`]), g.hallenId || '')}</select></td>
-        <td><select data-c="po-runde" data-id="${g.id}">${optionen(rundenOpt, g.slot ?? '')}</select></td>
-        <td>${torFelder(g)}
-          ${istPlatzierung(g) ? `<div data-sieger="${g.id}" ${unent ? '' : 'hidden'} style="margin-top:.4rem">
+        <td><select data-c="po-sport" data-id="${esc(g.id)}" ${erg ? 'disabled title="Ergebnis eingetragen – Sportart fest"' : ''}>${optionen(spielSportarten().map(s => [s.id, s.name]), g.sportart)}</select></td>
+        <td><select data-c="po-halle" data-id="${esc(g.id)}" aria-label="Halle">${halleVon(g.hallenId) ? '' : '<option value="">– Halle wählen –</option>'}${optionen(S.hallen.map(h => [h.id, h.sportart === g.sportart ? h.name : `${h.name} (Vorrunde: ${sportName(h.sportart)})`]), g.hallenId || '')}</select></td>
+        <td><select data-c="po-runde" data-id="${esc(g.id)}">${optionen(rundenOpt, g.slot ?? '')}</select></td>
+        <td>${istFolge(g) && !(g.klasseA && g.klasseB) ? torFelder(g).replace(/<input /g, '<input disabled title="Teilnehmer stehen noch nicht fest" ') : torFelder(g)}
+          ${istPlatzierung(g) ? `<div data-sieger="${esc(g.id)}" ${unent ? '' : 'hidden'} style="margin-top:.4rem">
             <div class="hinweis warn" style="margin:0 0 .3rem">Unentschieden – Sieger festlegen:</div>
-            <select data-c="po-sieger" data-id="${g.id}" aria-label="Sieger">${optionen([['', 'Sieger wählen …'], [g.klasseA, klasseName(g.klasseA)], [g.klasseB, klasseName(g.klasseB)]], g.sieger || '')}</select>
-            <input type="text" list="vermerke" placeholder="Vermerk, z. B. nach Siebenmeterwerfen" value="${esc(g.vermerk || '')}" data-c="po-vermerk" data-id="${g.id}" style="margin-top:.3rem;width:100%">
+            <select data-c="po-sieger" data-id="${esc(g.id)}" aria-label="Sieger">${optionen([['', 'Sieger wählen …'], [g.klasseA, klasseName(g.klasseA)], [g.klasseB, klasseName(g.klasseB)]], g.sieger || '')}</select>
+            <input type="text" list="vermerke" placeholder="Vermerk, z. B. nach Siebenmeterwerfen" value="${esc(g.vermerk || '')}" data-c="po-vermerk" data-id="${esc(g.id)}" style="margin-top:.3rem;width:100%">
           </div>` : ''}</td></tr>`;
     }).join('')}</tbody></table></div></div>
     <div class="karte"><h3 style="margin-top:0">Übersicht</h3><p class="klein" id="raster-hinweis">Verschieben: Spiel antippen, dann Zielfeld oder anderes Spiel antippen.</p>${rasterHTML('playoff')}</div>
@@ -3142,13 +3193,17 @@ UI.RENDER.playoffs = () => {
 };
 function poZeileAktualisieren(g) {
   Playoff.aufloesen();
-  playoffSpiele().filter(istFolge).forEach(f => ['A', 'B'].forEach(t => {
-    const el = $(`[data-teilnehmer="${f.id}-${t}"]`), k = f['klasse' + t];
-    if (el) el.innerHTML = k ? esc(klasseName(k)) : '<i class="klein">steht noch nicht fest</i>';
-  }));
-  const box = $(`[data-sieger="${g.id}"]`);
+  playoffSpiele().filter(istFolge).forEach(f => {
+    ['A', 'B'].forEach(t => {
+      const el = $(`[data-teilnehmer="${f.id}-${t}"]`), k = f['klasse' + t];
+      if (el) el.innerHTML = k ? esc(klasseName(k)) : '<i class="klein">steht noch nicht fest</i>';
+    });
+    // Ergebnis erst eintragbar, wenn beide Teilnehmer feststehen
+    $$(`[data-tor][data-id="${f.id}"]`).forEach(inp => { inp.disabled = !(f.klasseA && f.klasseB); });
+  });
+  const box = $(`[data-sieger="${esc(g.id)}"]`);
   if (box) box.hidden = !(hatErgebnis(g) && g.toreA === g.toreB);
-  const sel = $(`[data-c="po-sport"][data-id="${g.id}"]`);
+  const sel = $(`[data-c="po-sport"][data-id="${esc(g.id)}"]`);
   if (sel) sel.disabled = hatErgebnis(g);
 }
 AENDERUNG['po-spielen'] = el => {
@@ -3267,19 +3322,19 @@ function urkVorschauEintrag() {
   return Urkunde.beispiel();
 }
 function feldEditorHTML(f) {
-  return `<div class="feld-editor ${UI.urkFeld === f.id ? 'gewaehlt' : ''}" data-feldeditor="${f.id}">
-    <div class="zeile"><textarea rows="1" data-i="feld-text" data-id="${f.id}" aria-label="Text" style="min-height:44px">${esc(f.text)}</textarea></div>
+  return `<div class="feld-editor ${UI.urkFeld === f.id ? 'gewaehlt' : ''}" data-feldeditor="${esc(f.id)}">
+    <div class="zeile"><textarea rows="1" data-i="feld-text" data-id="${esc(f.id)}" aria-label="Text" style="min-height:44px">${esc(f.text)}</textarea></div>
     <div class="zeile">
-      <label>X <input type="number" step="0.5" value="${f.x}" data-i="feld-x" data-id="${f.id}"></label>
-      <label>Y <input type="number" step="0.5" value="${f.y}" data-i="feld-y" data-id="${f.id}"></label>
-      <label>Größe <input type="number" min="4" max="150" step="1" value="${f.size}" data-i="feld-size" data-id="${f.id}"></label>
-      <input type="color" value="${esc(f.farbe)}" data-i="feld-farbe" data-id="${f.id}" aria-label="Farbe">
+      <label>X <input type="number" step="0.5" value="${esc(f.x)}" data-i="feld-x" data-id="${esc(f.id)}"></label>
+      <label>Y <input type="number" step="0.5" value="${esc(f.y)}" data-i="feld-y" data-id="${esc(f.id)}"></label>
+      <label>Größe <input type="number" min="4" max="150" step="1" value="${esc(f.size)}" data-i="feld-size" data-id="${esc(f.id)}"></label>
+      <input type="color" value="${esc(f.farbe)}" data-i="feld-farbe" data-id="${esc(f.id)}" aria-label="Farbe">
     </div>
     <div class="zeile">
-      <select data-c="feld-font" data-id="${f.id}" aria-label="Schrift">${optionen(SCHRIFT_NAMEN, f.font)}</select>
-      <select data-c="feld-style" data-id="${f.id}" aria-label="Stil">${optionen(STIL_NAMEN, f.style)}</select>
-      <select data-c="feld-align" data-id="${f.id}" aria-label="Ausrichtung">${optionen([['left', 'links'], ['center', 'zentriert'], ['right', 'rechts']], f.align)}</select>
-      <button class="btn btn-klein btn-gefahr" data-a="feld-loeschen" data-id="${f.id}">Entfernen</button>
+      <select data-c="feld-font" data-id="${esc(f.id)}" aria-label="Schrift">${optionen(SCHRIFT_NAMEN, f.font)}</select>
+      <select data-c="feld-style" data-id="${esc(f.id)}" aria-label="Stil">${optionen(STIL_NAMEN, f.style)}</select>
+      <select data-c="feld-align" data-id="${esc(f.id)}" aria-label="Ausrichtung">${optionen([['left', 'links'], ['center', 'zentriert'], ['right', 'rechts']], f.align)}</select>
+      <button class="btn btn-klein btn-gefahr" data-a="feld-loeschen" data-id="${esc(f.id)}">Entfernen</button>
     </div></div>`;
 }
 UI.RENDER.urkunden = () => {
@@ -3299,8 +3354,8 @@ UI.RENDER.urkunden = () => {
     <div class="karte urk-vorschau"><div class="zeile"><h3 style="margin:0">Vorschau</h3><span class="trenner"></span>
         <select data-c="urk-vorschau" aria-label="Vorschau für">${optionen([['', 'Beispieldaten (6a, 1. Platz)'], ...es.liste.map(e => [e.klasseId, `${klasseName(e.klasseId)} – ${e.platzText}`])], U.vorschauKlasse || '')}</select></div>
       <div class="urk-seite" id="urk-seite" style="aspect-ratio:${W}/${H};margin:.6rem auto 0;max-width:max(260px, calc((100vh - var(--kopf-h, 56px) - 210px) * ${rund(W / H, 4)}))">
-        ${U.vorlageDataUrl ? `<img src="${U.vorlageDataUrl}" alt="">` : rahmen}
-        ${U.felder.map(f => `<div class="urk-feld ${UI.urkFeld === f.id ? 'gewaehlt' : ''}" data-feld="${f.id}"></div>`).join('')}
+        ${istBildDataUrl(U.vorlageDataUrl) ? `<img src="${esc(U.vorlageDataUrl)}" alt="">` : rahmen}
+        ${U.felder.map(f => `<div class="urk-feld ${UI.urkFeld === f.id ? 'gewaehlt' : ''}" data-feld="${esc(f.id)}"></div>`).join('')}
       </div>
       <p class="klein">Felder mit Maus oder Finger an die gewünschte Stelle ziehen. Angaben in mm ab der linken oberen Ecke; Y ist die Mitte der (ersten) Zeile.</p>
     </div>
@@ -3320,7 +3375,7 @@ UI.RENDER.urkunden = () => {
     <p class="klein">Grundlage: ${es.quelle === 'playoff' ? 'Platzierungsspiele' : 'Vorrunden-Tabelle'} · ${es.liste.length} Klassen.</p>
     <div class="zeile">
       <button class="btn btn-primaer" data-a="urk-alle" ${es.liste.length ? '' : 'disabled'}>Alle Urkunden (eine PDF)</button>
-      <label>Nur Platz 1 bis <input type="number" min="1" max="50" value="${U.topN || 3}" id="urk-topn" class="kurz"></label>
+      <label>Nur Platz 1 bis <input type="number" min="1" max="50" value="${esc(U.topN || 3)}" id="urk-topn" class="kurz"></label>
       <button class="btn" data-a="urk-top" ${es.liste.length ? '' : 'disabled'}>Top-Urkunden (eine PDF)</button>
     </div>
     <div class="zeile">
@@ -3336,7 +3391,7 @@ function urkLayout() {
   if (!seite) return;
   const { W } = seitenmass(S.urkunden.ausrichtung), k = seite.clientWidth / W, w = Urkunde.werte(urkVorschauEintrag());
   S.urkunden.felder.forEach(f => {
-    const d = seite.querySelector(`[data-feld="${f.id}"]`);
+    const d = seite.querySelector(`[data-feld="${esc(f.id)}"]`);
     if (!d) return;
     d.textContent = Urkunde.text(f.text, w) || ' ';
     Object.assign(d.style, {
@@ -3369,7 +3424,7 @@ UI.NACH_RENDER.urkunden = () => {
       f.x = rund(Math.max(0, Math.min(W, fx + (ev.clientX - sx) / k)), 1);
       f.y = rund(Math.max(0, Math.min(H, fy + (ev.clientY - sy) / k)), 1);
       d.style.left = f.x * k + 'px'; d.style.top = f.y * k + 'px';
-      const ix = $(`[data-i="feld-x"][data-id="${f.id}"]`), iy = $(`[data-i="feld-y"][data-id="${f.id}"]`);
+      const ix = $(`[data-i="feld-x"][data-id="${esc(f.id)}"]`), iy = $(`[data-i="feld-y"][data-id="${esc(f.id)}"]`);
       if (ix) ix.value = f.x; if (iy) iy.value = f.y;
     };
     const ende = () => { d.removeEventListener('pointermove', bewegen); d.removeEventListener('pointerup', ende); d.removeEventListener('pointercancel', ende); Speicher.speichern(); };
@@ -3445,18 +3500,18 @@ function schemaKarteHTML(s) {
   const sc = Punkte.schema(s.id), formel = sc.modus === 'formel';
   const k = formel ? Punkte.kompiliere(sc.formel) : null;
   return `<div class="feld-editor"><h3 style="margin-top:0">${sportSpan(s.id)}</h3>
-    <label class="feld"><span>Art der Berechnung</span><select data-c="ps-modus" data-sport="${s.id}">${optionen([['parameter', 'Parameter'], ['formel', 'Eigene Formel']], sc.modus)}</select></label>
+    <label class="feld"><span>Art der Berechnung</span><select data-c="ps-modus" data-sport="${esc(s.id)}">${optionen([['parameter', 'Parameter'], ['formel', 'Eigene Formel']], sc.modus)}</select></label>
     ${formel ? `<label class="feld" style="margin-top:.5rem"><span>Formel (Punkte für eine Mannschaft in einem Spiel)</span>
-        <textarea data-i="ps-formel" data-sport="${s.id}" rows="2">${esc(sc.formel)}</textarea></label>
+        <textarea data-i="ps-formel" data-sport="${esc(s.id)}" rows="2">${esc(sc.formel)}</textarea></label>
         <div id="ps-fehler-${s.id}" class="klein" style="color:${k.ok ? 'var(--gruen)' : 'var(--rot)'}">${k.ok ? 'Formel gültig.' : esc(k.fehler)}</div>
         <p class="klein">Verfügbar: <code>tore</code>, <code>gegentore</code>, <code>diff</code>, <code>sieg</code>/<code>unentschieden</code>/<code>niederlage</code> (je 1 oder 0), <code>min()</code>, <code>max()</code>, <code>round()</code>, <code>floor()</code>, <code>ceil()</code>, <code>abs()</code>, Vergleich mit <code>? :</code>. Dezimalpunkt verwenden (0.5).
         Beispiel: <code>sieg*3 + unentschieden + min(tore, 10)*0.1</code></p>`
       : `<div class="spalten" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:.5rem;margin-top:.5rem">${SCHEMA_FELDER.map(([key, txt]) =>
-        `<label class="feld"><span>${esc(txt)}</span><input type="number" step="any" value="${sc[key] ?? ''}" data-c="ps-wert" data-sport="${s.id}" data-k="${key}"></label>`).join('')}</div>
+        `<label class="feld"><span>${esc(txt)}</span><input type="number" step="any" value="${esc(sc[key] ?? '')}" data-c="ps-wert" data-sport="${esc(s.id)}" data-k="${esc(key)}"></label>`).join('')}</div>
         <label class="feld" style="margin-top:.5rem"><span>Min./Max. gelten nach allen Zusatzpunkten.</span></label>`}
     <div class="zeile" style="margin-top:.5rem"><span class="klein">Probe:</span>
-      <input type="number" min="0" value="3" class="kurz" data-i="ps-test" data-sport="${s.id}" id="pt-${s.id}-a" aria-label="eigene Tore"> :
-      <input type="number" min="0" value="1" class="kurz" data-i="ps-test" data-sport="${s.id}" id="pt-${s.id}-b" aria-label="Gegentore">
+      <input type="number" min="0" value="3" class="kurz" data-i="ps-test" data-sport="${esc(s.id)}" id="pt-${s.id}-a" aria-label="eigene Tore"> :
+      <input type="number" min="0" value="1" class="kurz" data-i="ps-test" data-sport="${esc(s.id)}" id="pt-${s.id}-b" aria-label="Gegentore">
       <span id="pt-${s.id}-erg" class="klein"></span></div></div>`;
 }
 function schemaProbe(sportId) {
@@ -3476,9 +3531,9 @@ UI.RENDER.einstellungen = () => {
     <div class="karte"><h2>Rangfolge bei Gleichstand (Tie-Break) <span class="beispiel">Vorschlag</span></h2>
       <p class="klein">Die Kriterien werden von oben nach unten angewendet. „Direkter Vergleich“ wertet nur die Spiele der (noch) gleichstehenden Klassen untereinander.
       „Manuelle Festlegung“ ermöglicht in Schritt 6 eine Reihenfolge per Losentscheid.</p>
-      <ol class="sortliste">${tb.map((k, i) => `<li><label class="check name"><input type="checkbox" data-c="tb-an" data-id="${k.id}" ${k.an ? 'checked' : ''}> ${esc(TIEBREAK_KRITERIEN[k.id])}</label>
-        <button class="btn btn-klein btn-icon" data-a="tb-move" data-pos="${i}" data-r="-1" ${i === 0 ? 'disabled' : ''} aria-label="nach oben">▲</button>
-        <button class="btn btn-klein btn-icon" data-a="tb-move" data-pos="${i}" data-r="1" ${i === tb.length - 1 ? 'disabled' : ''} aria-label="nach unten">▼</button></li>`).join('')}</ol></div>
+      <ol class="sortliste">${tb.map((k, i) => `<li><label class="check name"><input type="checkbox" data-c="tb-an" data-id="${esc(k.id)}" ${k.an ? 'checked' : ''}> ${esc(TIEBREAK_KRITERIEN[k.id])}</label>
+        <button class="btn btn-klein btn-icon" data-a="tb-move" data-pos="${esc(i)}" data-r="-1" ${i === 0 ? 'disabled' : ''} aria-label="nach oben">▲</button>
+        <button class="btn btn-klein btn-icon" data-a="tb-move" data-pos="${esc(i)}" data-r="1" ${i === tb.length - 1 ? 'disabled' : ''} aria-label="nach unten">▼</button></li>`).join('')}</ol></div>
     <div class="karte"><h2>Daten</h2>
       <p>Alle Daten bleiben auf diesem Gerät (Browser-Speicher). Nach jeder Änderung wird automatisch ein Zwischenstand gespeichert.
       Ein <b>Backup</b> (.json) sichert den kompletten Stand inklusive Urkundenvorlage und dient zum Weiterarbeiten auf einem anderen Gerät.</p>
