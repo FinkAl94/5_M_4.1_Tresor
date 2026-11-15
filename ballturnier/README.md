@@ -39,5 +39,8 @@ Alles lässt sich je Turnier ändern.
 - **Backup laden**: Stellt einen Stand vollständig wieder her, nach einem Warnhinweis. So geht es auf einem anderen Gerät weiter.
 - Wer Browserdaten löscht oder in einem privaten Fenster arbeitet, verliert den Zwischenstand. Deshalb am Turniertag regelmäßig ein Backup speichern.
 - **Neues Turnier**: Übernimmt auf Wunsch Hallen, Zeiten, Punkteschema und Urkundenvorlage als Vorbelegung.
+- **↶ Frühere Stände** (oben rechts): Vor größeren Aktionen (Spielplan neu, Paarungen übernehmen, Backup laden, Neues Turnier …) und alle 3 Minuten sichert die App den Stand; die letzten 20 lassen sich wiederherstellen (auch das Wiederherstellen selbst ist rückgängig zu machen). Nur in diesem Browser, ohne Urkundenbild – ersetzt das Backup nicht.
+- **Nur in einem Fenster arbeiten:** Ist das Turnier in zwei Fenstern/Tabs offen und wird woanders gespeichert, warnt die App sofort und speichert nicht mehr, bis entschieden ist: anderen Stand laden (empfohlen) oder diesen behalten (der andere wird unter „Frühere Stände“ gesichert).
+- Ein geladenes Backup wird vor der Übernahme geprüft und gesäubert (Schutz vor manipulierten Dateien).
 
-Eingebettete Bibliotheken (unverändert, am Dateiende): jsPDF 2.5.2 und jsPDF-AutoTable 3.8.4 (MIT), pdf.js 3.11.174 (Apache-2.0).
+Eingebettete Bibliotheken (am Dateiende): jsPDF 4.2.1 und jsPDF-AutoTable 5.0.9 (MIT), pdf.js 6.4.299 (Apache-2.0) – jeweils ohne bekannte Sicherheitslücken zum Zeitpunkt der Erstellung.
