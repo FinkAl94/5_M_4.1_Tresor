@@ -28,7 +28,7 @@ Alles lässt sich je Turnier ändern.
    - Klassen ohne Gegenplatz (z. B. 5. Gruppe B) bekommen ein Zusatzspiel mit frei wählbarem Gegner, ohne Einfluss auf die Platzierung.
    - Sportart und Halle sind je Spiel frei und unabhängig voneinander wählbar; die Vorrunden-Sportart einer Halle steht nur als Hinweis dabei. Bei Unentschieden wird der Sieger mit Vermerk festgelegt.
    - Spiele aussetzen: Über „Gespielt werden“ (z. B. nur 1. gegen 1. oder bis 3. gegen 3.) oder je Spiel über das Häkchen „spielen“. Ausgesetzte Paarungen erhalten ihren Platz nach Vorrundenpunkten (wahlweise geteilter Platz). Spiele mit Ergebnis lassen sich nicht aussetzen.
-8. **Urkunden**: Vorlage hochladen (PNG, JPG oder PDF), Textfelder verschieben, Platzhalter wie `{klasse}` und `{platzText}` verwenden. Danach eine PDF mit allen, nur den besten oder einzelnen Urkunden.
+8. **Urkunden**: Standardvorlage ist die Urkunde „Ballturnier BBS“ (eingebaut); Klasse und Platz werden automatisch in den Satz „… hat die Klasse 8Ga den 1. Platz erreicht.“ eingesetzt. Alternativ eigene Vorlage hochladen (PNG, JPG oder PDF) oder ohne Vorlage (schlichter Rahmen). Textfelder sind verschiebbar und frei änderbar, Platzhalter z. B. `{klasse}`, `{platzText}`. Danach eine PDF mit allen, nur den besten oder einzelnen Urkunden.
 
 **⚙ Punkteschema & Daten**: Punkteschema je Sportart (Parameter oder eigene Formel), Reihenfolge bei Gleichstand, Backup und „Neues Turnier“.
 
